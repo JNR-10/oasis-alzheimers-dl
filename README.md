@@ -2,9 +2,9 @@
 
 ## Team
 
-- [Team Member 1]
-- [Team Member 2]
-- [Team Member 3]
+- [Jainil]
+- [Mohit]
+- [Nirupam]
 
 ## Course and Track
 
