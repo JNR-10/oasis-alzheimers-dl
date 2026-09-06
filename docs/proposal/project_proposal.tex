@@ -1,0 +1,135 @@
+\documentclass[11pt]{article}
+
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{needspace}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlist[itemize]{leftmargin=1.35em,itemsep=1pt,topsep=2pt}
+\setlist[enumerate]{leftmargin=1.55em,itemsep=1pt,topsep=2pt}
+\renewcommand{\arraystretch}{1.15}
+\setlength{\emergencystretch}{2em}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Deep Learning Project Proposal}
+\rhead{Fall 2026}
+\cfoot{\thepage}
+\setlength{\headheight}{14pt}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{\vspace{-1.0cm}\textbf{Longitudinal Deep Learning for Alzheimer's Disease Detection from Structural MRI}}
+\author{[Team Member 1] \quad [Team Member 2] \quad [Team Member 3]\\[3pt]
+San Jose State University \quad | \quad Deep Learning \quad | \quad Fall 2026}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-0.5cm}
+
+\textbf{Abstract.}
+Our previous machine-learning project studied Alzheimer's disease detection from structural MRI and found that high classification accuracy could be misleading when the model relied heavily on the Mini-Mental State Examination (MMSE). After introducing MRI-derived structural biomarkers, the system retained strong performance while becoming less dependent on MMSE. The main limitations of that work were its cross-sectional setting and reliance on manually engineered imaging features. This project proposes a deep-learning extension that learns directly from longitudinal 3D MRI. Using OASIS-3, we will compare recent open-source 3D and longitudinal models and develop a model that combines volumetric feature learning with temporal information across visits. We will additionally investigate anatomy-guided multi-task supervision derived from structural biomarkers identified in the previous project. OASIS-3 access and cohort feasibility will be confirmed before the final experimental scope is fixed.
+
+\section{Background and Motivation}
+
+The previous project used OASIS-1 to investigate Alzheimer's disease detection using both clinical variables and structural MRI. A key result was that MMSE, a cognitive test closely related to dementia diagnosis, could reproduce much of the performance of the full tabular model. This raised a circularity problem: a model that predicts dementia mainly from an already available cognitive assessment has limited independent value.
+
+To address this, the project extracted 104 MRI-derived structural features, including hippocampal, ventricular, entorhinal, and temporal-lobe measurements. The best MRI-enhanced model achieved approximately 90.5\% accuracy, while an imaging-focused setting retained approximately 84.5\% accuracy without MMSE. These results suggested that structural MRI contains useful diagnostic signal independent of cognitive-test input.
+
+The natural next step is to remove the dependence on manually designed MRI features and allow a deep network to learn representations directly from the images. The previous project also identified longitudinal analysis as future work because OASIS-1 provides essentially one time point per subject. Alzheimer's disease is progressive, so changes across multiple MRI visits may provide information that a single scan cannot capture.
+
+\section{Problem Formulation}
+
+The proposed system will take one or more T1-weighted structural MRI scans from the same subject and predict whether the subject is cognitively normal or shows Alzheimer's-related impairment at a target visit. Cognitive-test scores such as MMSE will not be used as inference features. Clinical labels may still be used as supervision during training.
+
+\textbf{Input:} One to several longitudinal 3D T1-weighted MRI volumes for a subject, together with the elapsed time between visits.
+
+\textbf{Output:} A probability of Alzheimer's-related cognitive impairment. A secondary severity prediction may be considered only if the available labels support it.
+
+\textbf{Constraints:} OASIS-3 access and approval timing, irregular visit schedules, missing labels, class imbalance, preprocessing failures, and 3D GPU memory will affect the feasible cohort and model scope.
+
+\textbf{Success criteria:} ROC-AUC, balanced accuracy, macro-F1, sensitivity for the impaired class, specificity, and confusion matrices. The main goal is to determine whether the proposed longitudinal and multi-task components improve over strong controlled baselines under the same subject-level split. No arbitrary accuracy target will be used.
+
+\section{Dataset and Preprocessing}
+
+The intended dataset is OASIS-3, a longitudinal collection of neuroimaging, clinical, and cognitive observations \cite{lamontagne2019}. Subjects with usable T1-weighted MRI and corresponding diagnostic labels will be selected. Access requirements and approval timing will be treated as a feasibility risk and confirmed through the official OASIS process before cohort construction. If access is delayed, any fallback dataset will be documented explicitly rather than silently substituted.
+
+All scans from the same subject will remain in exactly one of the train, validation, or test partitions to prevent leakage between visits. MRI preprocessing will follow a consistent pipeline: orientation standardization, bias-field correction or equivalent intensity correction, brain extraction, spatial registration, resampling to a common voxel size, cropping or padding to a fixed volume, and intensity normalization. Conservative 3D augmentation such as small rotations, translations, scaling, and intensity perturbation will be used during training.
+
+\section{Proposed Technical Approach}
+
+The project will begin with a conventional 3D CNN or 3D ResNet baseline that processes a single MRI scan. We will then evaluate at least two recent open-source models relevant to the task, including LongFormer for longitudinal Alzheimer's MRI classification \cite{chen2024longformer} and 3DSC-TF, which combines 3D convolution with Transformer-based modeling \cite{qiang2025three}. VoCo and other 3D representation-learning resources will be considered only if their modality, checkpoints, licensing, and compute requirements are suitable \cite{wu2024voco}.
+
+\textbf{Longitudinal modeling.} A shared 3D encoder will produce an embedding for each MRI visit. These visit embeddings will then be combined using a temporal attention or Transformer module that also receives the elapsed time between scans. The same encoder processes each visit so that the temporal module compares representations in a common space.
+
+\textbf{Anatomy-guided multi-task learning.} In addition to the main classification objective, the network will be encouraged to predict selected structural quantities related to regions that were informative in the previous project, such as hippocampal and ventricular measurements. These auxiliary targets will be used only during training. \Needspace{5\baselineskip} Conceptually, the objective is
+
+\[
+\mathcal{L}_{\mathrm{total}} = \mathcal{L}_{\mathrm{classification}} + \lambda\mathcal{L}_{\mathrm{anatomy}}.
+\]
+
+This gives the project two clear deep-learning improvements: an architectural change from single-scan classification to longitudinal temporal modeling, and an objective change through anatomy-guided auxiliary supervision. Neither component is claimed to be individually unprecedented; the project tests their controlled value in the continuation of the prior ML work.
+
+\section{Models and Experimental Plan}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}lYY@{}}
+\toprule
+\textbf{Experiment} & \textbf{Model} & \textbf{Purpose}\\
+\midrule
+Baseline 1 & 3D CNN / 3D ResNet & Straightforward single-scan deep-learning baseline.\\
+Baseline 2 & 3DSC-TF & Recent 3D convolution-Transformer comparison.\\
+Baseline 3 & LongFormer & Recent longitudinal MRI comparison.\\
+Proposed A & Shared 3D encoder + temporal module & Measure the value of multiple visits.\\
+Proposed B & Proposed A + anatomy loss & Test anatomy-guided auxiliary supervision.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Core ablations.} The first comparison will test the same system with and without longitudinal information. The second will compare the longitudinal system with and without auxiliary anatomical supervision. All main models will use the same subject-level test set wherever possible. Results will include ROC-AUC, balanced accuracy, macro-F1, sensitivity, specificity, and confusion matrices. Repeated runs or bootstrap confidence intervals will be used where feasible so that small differences are not over-interpreted.
+
+If time and compute permit, secondary experiments may compare weighted cross-entropy with focal loss and pretrained versus randomly initialized encoders. These are optional and do not define the minimum project scope.
+
+\section{Expected Outcome and Feasibility}
+
+The expected outcome is a complete deep-learning pipeline that extends the earlier ML project rather than replacing it. The previous work established that MRI contains independent signal and that models should be evaluated for shortcut dependence. This project will test whether that signal can be learned directly from 3D images and whether progression across time provides additional value.
+
+The minimum semester scope is intentionally manageable: prepare an OASIS-3 cohort, implement a 3D baseline, evaluate two recent open-source models, train the proposed longitudinal model, and perform the two core ablations. Training will use resized 3D inputs, mixed precision, early stopping, and other memory-saving strategies as needed. A lightweight inference demo may be added after the core experiments are complete, but the primary deliverable is the trained and rigorously evaluated deep-learning pipeline.
+
+\section{Conclusion}
+
+This project continues the previous Alzheimer's MRI work along the two future-work directions most appropriate for a deep-learning course: end-to-end 3D representation learning and longitudinal modeling. By comparing recent models and testing longitudinal and anatomy-guided improvements through controlled ablations, the project should provide a technically meaningful extension while remaining feasible within one semester. The project will not claim that longitudinal MRI classification is new; its value lies in the rigor of the comparison and in preserving an imaging-driven evaluation that does not use MMSE as an inference feature.
+
+\begin{thebibliography}{9}
+
+\bibitem{previousml}
+Previous Semester Project Report, ``Machine Learning for Alzheimer's Disease Detection from Brain MRI: Exposing Cognitive Test Dependency and Enhancing Clinical Accuracy with Structural Imaging Biomarkers,'' CMPE-257, San Jose State University, 2026. The report and reproducibility materials are retained in this repository.
+
+\bibitem{lamontagne2019}
+P. J. LaMontagne et al., ``OASIS-3: Longitudinal Neuroimaging, Clinical, and Cognitive Dataset for Normal Aging and Alzheimer Disease,'' 2019. DOI: \url{https://doi.org/10.1101/2019.12.13.19014902}. Dataset information: \url{https://sites.wustl.edu/oasisbrains/home/oasis-3/}.
+
+\bibitem{chen2024longformer}
+Q. Chen, Q. Fu, H. Bai, and Y. Hong, ``LongFormer: Longitudinal Transformer for Alzheimer's Disease Classification with Structural MRIs,'' in \textit{Proc. IEEE/CVF Winter Conference on Applications of Computer Vision}, 2024, pp. 3575--3584. Paper: \url{https://arxiv.org/abs/2302.00901}. Code: \url{https://github.com/Qybc/LongFormer}.
+
+\bibitem{qiang2025three}
+Y.-R. Qiang et al., ``Classification of Alzheimer's disease by jointing 3D depthwise separable convolutional neural network and transformer,'' \textit{Expert Systems with Applications}, vol. 286, art. 127720, 2025. DOI: \url{https://doi.org/10.1016/j.eswa.2025.127720}. Code: \url{https://github.com/NWPU-903PR/3DSC-TF}.
+
+\bibitem{wu2024voco}
+L. Wu, J. Zhuang, and H. Chen, ``VoCo: A Simple-yet-Effective Volume Contrastive Learning Framework for 3D Medical Image Analysis,'' in \textit{Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition}, 2024, pp. 22873--22882. DOI: \url{https://doi.org/10.1109/CVPR52733.2024.02158}. Code: \url{https://github.com/Luffy03/VoCo}.
+
+\end{thebibliography}
+
+\end{document}
