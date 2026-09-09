@@ -31,7 +31,7 @@
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 
 \title{\vspace{-1.0cm}\textbf{Longitudinal Deep Learning for Alzheimer's Disease Detection from Structural MRI}}
-\author{Jainil Rana \quad Nirupam Maladi \quad Mohit Barade\\[3pt]
+\author{Jainil Narendrakumar Rana \quad Nirupam Narayana- Maladi \quad Mohit Manoj Barade\\[3pt]
 San Jose State University \quad | \quad Deep Learning \quad | \quad Fall 2026}
 \date{}
 
@@ -44,11 +44,14 @@ Alzheimer's disease detection from structural MRI is a clinically important but 
 
 \section{Background and Motivation}
 
-The previous project used OASIS-1 to investigate Alzheimer's disease detection using both clinical variables and structural MRI. A key result was that MMSE, a cognitive test closely related to dementia diagnosis, could reproduce much of the performance of the full tabular model. This raised a circularity problem: a model that predicts dementia mainly from an already available cognitive assessment has limited independent value.
+Alzheimer's disease is a progressive neurodegenerative disorder in which early and accurate diagnosis is critical for intervention, clinical management, and monitoring of disease progression. Structural MRI is a central imaging modality because it captures cross-sectional and longitudinal patterns of atrophy in regions such as the hippocampus, temporal lobe, entorhinal cortex, and ventricles. In practice, however, disease detection from MRI remains difficult because subtle anatomical changes can be confounded by age, scanning variation, and clinically correlated covariates.
 
-Legacy work (previous class). In an earlier class project we built a controlled pipeline on OASIS-1 that extracted 104 MRI-derived structural features (hippocampal, ventricular, entorhinal, and temporal-lobe measurements) and trained tabular and imaging-enhanced models. That analysis showed that carefully derived MRI features retain substantial predictive signal while also revealing an undesirable dependence on cognitive tests when they are included as inputs. The earlier study was cross-sectional and relied on handcrafted imaging features, which motivates the present extension.
+In a previous class machine-learning project, we investigated Alzheimer's disease detection using the OASIS-1 dataset by combining clinical variables with structural MRI information. The study began with conventional tabular models and was later extended by extracting 104 MRI-derived structural features, including hippocampal, ventricular, entorhinal, and temporal-lobe measurements. A key finding was that much of the performance of the initial tabular models could be reproduced using the Mini-Mental State Examination (MMSE) score alone, revealing a circularity problem: a model that predicts dementia primarily from an already available cognitive test has limited independent diagnostic value. This result demonstrated that structural MRI contains useful signal, but also showed that the original approach was limited by cross-sectional modeling and manually engineered features.
 
-Novelty and planned advances. This project goes beyond the legacy work by (1) learning end-to-end from volumetric 3D MRI rather than relying on manually engineered features, (2) explicitly modeling longitudinal progression across multiple visits with a shared 3D encoder and temporal attention/Transformer module, and (3) using anatomy-guided auxiliary supervision to preserve interpretability while encouraging anatomically meaningful representations. We will enforce subject-level splits, exclude MMSE from inference to avoid shortcutting, and perform controlled ablations to quantify the contribution of longitudinal modeling and anatomy supervision. These elements together form the novel and testable contribution of the proposal.
+Recent deep-learning studies have shown that 3D convolutional, Transformer-based, and hybrid architectures can learn increasingly informative representations directly from MRI volumes. Models such as LongFormer \cite{chen2024longformer} and 3DSC-TF \cite{qiang2025three} demonstrate the benefit of volumetric feature learning and temporal or hybrid feature fusion for Alzheimer's classification, while self-supervised and transfer-learning methods such as VoCo, OpenMind, SuPreM, and Med3DInsight highlight the value of stronger 3D representation learning when labeled data are limited \cite{wu2024voco,openmind2024,suprem2024,med3dinsight2025}. These developments suggest a clear improvement path from the original tabular and cross-sectional idea: learn features end-to-end from 3D MRI, incorporate multiple scans over time, and preserve an imaging-first evaluation that excludes MMSE from inference.
+
+The present project therefore tackles the broader problem of building a robust longitudinal deep-learning pipeline for Alzheimer's detection. We aim to replace handcrafted MRI features with learned volumetric representations, model progression across visits with a shared 3D encoder and temporal module, and use anatomy-guided auxiliary supervision to preserve clinically meaningful structure while avoiding shortcut prediction. The proposed work keeps the project grounded in the lessons of the earlier study while aligning with the current state of the art in 3D MRI modeling and evaluation.
+
 
 \section{Problem Formulation}
 
