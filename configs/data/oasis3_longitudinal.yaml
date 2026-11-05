@@ -1,0 +1,40 @@
+# The primary cohort (ADR-0003).
+
+name: oasis3_longitudinal
+root: ${paths.data_root}/raw/oasis3
+manifest_path: ${paths.data_root}/manifests/oasis3_cohort.csv
+
+# --- inclusion rules (docs/data/cohort-definition.md) ---
+# max_assessment_gap_days is the open parameter of ADR-0004. The value below is a
+# placeholder and is fixed from the real data before any model trains.
+inclusion:
+  max_assessment_gap_days: 365
+  min_visits_for_longitudinal: 2
+  require_preprocessing_success: true
+
+# --- partitioning (ADR-0001) ---
+# Drawn once with this seed and never redrawn. Changing it invalidates every result
+# computed before the change.
+split_seed: 42
+split_ratios: [0.70, 0.15, 0.15]
+
+# --- preprocessing (docs/protocol/preprocessing.md) ---
+# Identical across every arm. A difference here would confound the ablations.
+voxel_size_mm: [1.5, 1.5, 1.5]
+volume_shape: [128, 128, 128]
+registration_target: within_subject_then_template
+intensity_normalization: zscore
+
+# Visits kept per sequence, counting back from the target visit. Bounds memory for
+# subjects with long histories.
+max_sequence_length: 5
+
+# Conservative by design — aggressive spatial augmentation on structural MRI destroys
+# the atrophy signal the task depends on. Applied identically across a subject's
+# visits, never independently per visit.
+augmentation:
+  enabled: true
+  rotation_degrees: 5
+  translation_voxels: 4
+  scale_range: [0.95, 1.05]
+  intensity_sigma: 0.05

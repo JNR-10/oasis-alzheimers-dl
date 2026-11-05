@@ -1,0 +1,122 @@
+# ---------------------------------------------------------------------------
+# Imaging data. OASIS data is governed by its Data Use Agreement and never
+# enters version control, in any form, at any size.
+# ---------------------------------------------------------------------------
+*.nii
+*.nii.gz
+*.img
+*.hdr
+*.mgz
+*.mgh
+*.mnc
+*.dcm
+*.DCM
+*.IMA
+DICOM/
+*.tar
+*.tar.gz
+*.zip
+
+# Cohort manifests carry subject identifiers and stay local.
+data/**
+!data/**/
+!data/**/README.md
+!data/**/.gitkeep
+
+# ---------------------------------------------------------------------------
+# Model weights and run artifacts
+# ---------------------------------------------------------------------------
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.pkl
+*.joblib
+checkpoints/**
+!checkpoints/.gitkeep
+
+results/**
+!results/**/
+!results/**/README.md
+!results/**/.gitkeep
+
+# Hydra / logging / tracking
+outputs/
+multirun/
+.hydra/
+wandb/
+runs/
+lightning_logs/
+tensorboard/
+mlruns/
+*.log
+
+# Experiment run records keep their index, not their payloads.
+experiments/**/artifacts/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+MANIFEST
+
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+.tox/
+.nox/
+
+# ---------------------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
+notebooks/**/*.html
+
+# ---------------------------------------------------------------------------
+# LaTeX build products
+# ---------------------------------------------------------------------------
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.synctex.gz
+*.toc
+
+# ---------------------------------------------------------------------------
+# Editor and OS
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

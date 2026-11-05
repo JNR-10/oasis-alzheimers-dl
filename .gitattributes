@@ -1,0 +1,12 @@
+* text=auto eol=lf
+
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.nii  binary
+*.gz   binary
+
+# Keep generated LaTeX and notebook noise out of diffs and language stats.
+*.ipynb        linguist-documentation
+docs/**        linguist-documentation
+*.tex          linguist-documentation

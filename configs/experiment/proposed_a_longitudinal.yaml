@@ -1,0 +1,18 @@
+# @package _global_
+# PA — the treatment arm of ablation 1, and the control arm of ablation 2.
+
+defaults:
+  - override /model: longitudinal_attention
+
+experiment:
+  name: proposed_a_longitudinal
+  arm: PA
+  description: >-
+    Shared visit encoder plus temporal attention over elapsed time. Differs from B1 by
+    the temporal module and nothing else.
+
+data:
+  longitudinal_subset_only: true
+
+training:
+  collate: sequence

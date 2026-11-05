@@ -1,0 +1,30 @@
+# Root config. Every run composes from here.
+#
+# An ablation is one override:
+#   python -m oasis_dl.cli.train experiment=proposed_b_anatomy
+#
+# If a comparison needs more than one override to express, the configs are hiding an
+# uncontrolled difference between the arms (ADR-0008).
+
+defaults:
+  - data: oasis3_longitudinal
+  - model: resnet3d
+  - training: default
+  - evaluation: default
+  - experiment: baseline_single_scan
+  - _self_
+
+# Local, machine-specific, never committed. Set OASIS_ROOT in your environment.
+paths:
+  data_root: ${oc.env:OASIS_ROOT,./data}
+  results_dir: ./results
+  checkpoint_dir: ./checkpoints
+
+hydra:
+  run:
+    dir: experiments/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: experiments/multirun/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${experiment.name}_seed${training.seed}
+  job:
+    chdir: false

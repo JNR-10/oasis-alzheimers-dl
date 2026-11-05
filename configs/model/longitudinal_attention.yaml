@@ -1,0 +1,16 @@
+# Encoder plus temporal module. Identical to resnet3d except for the temporal block —
+# the one variable of ablation 1.
+
+defaults:
+  - resnet3d
+
+name: longitudinal_attention
+
+temporal:
+  embedding_dim: 512
+  n_heads: 4
+  # Kept small: the cohort is small and Transformer components overfit it readily
+  # (docs/audits/).
+  n_layers: 2
+  dropout: 0.1
+  elapsed_time_scale_days: 365.25

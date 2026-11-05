@@ -1,0 +1,19 @@
+# @package _global_
+# B3 — LongFormer (Chen et al., WACV 2024). The closest published precedent.
+#
+# A comparison arm, not our design: its pairwise deformation fusion is what ADR-0005
+# chose against. Reproduced under *our* cohort, partitions, and preprocessing, so the
+# number here is not comparable to the paper's and the report says so.
+#
+# Scope: first to be cut under pressure (docs/protocol/README.md).
+
+experiment:
+  name: sota_longformer
+  arm: B3
+  description: >-
+    LongFormer adapted to this cohort. Requires registration quality sufficient for
+    deformation fields; sessions where that fails are reported, not silently dropped.
+  reference: https://github.com/Qybc/LongFormer
+
+data:
+  longitudinal_subset_only: true

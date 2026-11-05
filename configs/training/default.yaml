@@ -1,0 +1,23 @@
+# One training configuration, shared by every arm, so that no arm receives a budget,
+# schedule, or stopping rule another did not.
+
+max_epochs: 100
+learning_rate: 1.0e-4
+weight_decay: 1.0e-4
+
+# Small by necessity: 3D volumes times sequence length dominate GPU memory.
+batch_size: 2
+accumulate_grad_batches: 8
+mixed_precision: true
+num_workers: 4
+
+# ROC-AUC rather than loss, since the reported comparison is on ROC-AUC and the two
+# can diverge.
+early_stopping_metric: roc_auc
+early_stopping_patience: 15
+
+# Computed from the training partition only.
+class_weighting: balanced
+
+seed: 42
+deterministic: true

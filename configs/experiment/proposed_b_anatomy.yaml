@@ -1,0 +1,34 @@
+# @package _global_
+# PB — the treatment arm of ablation 2.
+#
+# Differs from PA by the auxiliary objective and nothing else. The inference pathway is
+# identical: the anatomy head is discarded at test time (ADR-0007), so any difference
+# comes from the representation the objective shaped rather than from extra information
+# at inference.
+
+defaults:
+  - proposed_a_longitudinal
+
+experiment:
+  name: proposed_b_anatomy
+  arm: PB
+  description: >-
+    Arm PA with anatomy-guided auxiliary supervision during training only.
+
+model:
+  anatomy_head:
+    hidden_dim: 128
+    # The final set is whatever the cohort's derivatives support — see
+    # docs/data/README.md, open question 1.
+    target_names:
+      - hippocampus_left_mm3
+      - hippocampus_right_mm3
+      - lateral_ventricle_left_mm3
+      - lateral_ventricle_right_mm3
+      - total_gray_matter_mm3
+
+training:
+  # lambda in L_total = L_classification + lambda * L_anatomy.
+  # Tuned on validation subjects only. Tuning it on test would turn ablation 2 into a
+  # search for a favorable number.
+  anatomy_weight: 0.1

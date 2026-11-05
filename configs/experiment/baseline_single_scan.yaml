@@ -1,0 +1,23 @@
+# @package _global_
+# B1 — the transparent single-scan baseline, and the control arm of ablation 1.
+
+defaults:
+  - override /model: resnet3d
+
+experiment:
+  name: baseline_single_scan
+  arm: B1
+  description: >-
+    3D ResNet over the target visit only. Receives the same visit sequences as the
+    longitudinal arms and reads only the final position, so the two arms of ablation 1
+    consume identical data and differ solely in how much of it the model may use.
+
+data:
+  # Restricted to the longitudinal subset so the baseline is measured on the same
+  # subjects as arm PA. Comparing a baseline trained on everyone against a
+  # longitudinal model trained on multi-visit subjects would confound the architecture
+  # change with a cohort change.
+  longitudinal_subset_only: true
+
+training:
+  collate: single_scan

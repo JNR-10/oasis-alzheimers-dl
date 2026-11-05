@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you reference this work, please cite it as below."
+title: "Longitudinal Deep Learning for Alzheimer's Disease Detection from Structural MRI"
+abstract: >-
+  A controlled study of whether longitudinal structural change and
+  anatomy-guided auxiliary supervision improve Alzheimer's disease detection
+  over a single-scan 3D baseline, evaluated under a subject-level partitioning
+  protocol with cognitive-test scores excluded from the inference pathway.
+type: software
+license: MIT
+repository-code: "https://github.com/JNR-10/oasis-alzheimers-dl"
+authors:
+  - family-names: Rana
+    given-names: Jainil Narendrakumar
+    affiliation: San Jose State University
+  - family-names: Maladi
+    given-names: Nirupam Narayana
+    affiliation: San Jose State University
+  - family-names: Barade
+    given-names: Mohit Manoj
+    affiliation: San Jose State University
+keywords:
+  - alzheimers-disease
+  - structural-mri
+  - longitudinal-modeling
+  - deep-learning
+  - oasis-3
+references:
+  - type: data
+    title: "OASIS-3: Longitudinal Neuroimaging, Clinical, and Cognitive Dataset for Normal Aging and Alzheimer Disease"
+    authors:
+      - family-names: LaMontagne
+        given-names: Pamela J.
+    year: 2019
+    doi: 10.1101/2019.12.13.19014902
+  - type: software
+    title: "OASIS Alzheimer's ML — predecessor project (CMPE-257)"
+    repository-code: "https://github.com/JNR-10/oasis-alzheimers-ml"

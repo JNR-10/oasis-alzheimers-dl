@@ -1,0 +1,19 @@
+# The shared visit encoder (ADR-0005). Used by every arm, including the baseline —
+# which is what makes ablation 1 vary architecture alone.
+
+name: resnet3d
+
+encoder:
+  backbone: resnet18
+  embedding_dim: 512
+  in_channels: 1
+  # Pretrained 3D checkpoints are largely CT-trained; CT-to-T1 transfer is an open
+  # question rather than a free win (docs/survey/). Stretch goal, off by default.
+  pretrained: false
+
+classification_head:
+  dropout: 0.3
+
+# Present but unused unless an experiment enables it.
+temporal: null
+anatomy_head: null

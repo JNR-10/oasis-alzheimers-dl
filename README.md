@@ -1,89 +1,128 @@
 # Longitudinal Deep Learning for Alzheimer's Disease Detection from Structural MRI
 
-## Team
+Does longitudinal structural change improve Alzheimer's detection over a controlled
+single-scan model — and does anatomy-guided auxiliary supervision improve the
+representation — when cognitive test scores are kept out of the inference pathway and
+subjects never cross a partition boundary?
 
-- [Jainil]
-- [Mohit]
-- [Nirupam]
+**CMPE-258 Deep Learning, Fall 2026 · San Jose State University**
+Jainil Narendrakumar Rana · Nirupam Narayana Maladi · Mohit Manoj Barade
 
-## Course and Track
+---
 
-**Deep Learning - Fall 2026**  
-San Jose State University  
-**Selected track:** Option 1 - Modern Deep Learning Pipeline (Training + Deployment)
+## Status
 
-## Project Status
+**Pre-data.** The repository holds the proposal, the literature survey, the feasibility
+audit, the experimental protocol, and the implementation scaffold. No model has been
+trained and no result exists.
 
-This repository is the dedicated Fall 2026 deep-learning project repository. It currently contains the project proposal, literature review, feasibility audit, and planned implementation structure. Model implementation and training will begin after OASIS-3 access and cohort feasibility are confirmed.
+The critical path is OASIS-3 access, tracked in
+[`docs/data/access-log.md`](docs/data/access-log.md). Every module under
+`src/oasis_dl/` is a typed interface with a documented contract and an unimplemented
+body — deliberately, so that the structure can be reviewed before the code commits to
+it, and so nothing here can be mistaken for a working pipeline.
 
-## Abstract
+## The study
 
-This project studies Alzheimer's disease detection from longitudinal 3D structural MRI. The system will compare conventional volumetric baselines with longitudinal models that learn a shared 3D representation for each visit and use temporal attention or a Transformer to model change over time. Elapsed time between visits will be provided to the temporal module. Anatomy-guided auxiliary supervision will also be investigated using structural targets such as hippocampal and ventricular measurements. These auxiliary targets will be used during training only; MMSE and similar cognitive-test scores will not be used as inference features.
+The predecessor project ([oasis-alzheimers-ml](https://github.com/JNR-10/oasis-alzheimers-ml),
+CMPE-257) found that its tabular models were MMSE proxies: a model using **MMSE alone —
+one feature — matched the full eight-feature baseline at 86.9% accuracy**. Adding 104
+MRI-derived features cut MMSE's importance from 37.8% to 9.1% and still reached 85.7%
+without it, which established that structural MRI carries independent signal. It left
+two limitations, named in its own future work: hand-engineered features, and
+cross-sectional modeling on a dataset that cannot support anything else.
 
-## Motivation
+This project takes both. It learns volumetric representations end-to-end and models
+change across visits, on OASIS-3.
 
-Earlier machine-learning work showed that structural MRI contains useful signal for Alzheimer's-related classification, while also exposing the risk of shortcut learning when a cognitive assessment such as MMSE is included as a predictive feature. This project keeps the inference pathway imaging-centered and addresses two further limitations: hand-engineered imaging representations and cross-sectional modeling that treats visits as unrelated examples.
+| Arm | Model | Role |
+|---|---|---|
+| B1 | 3D ResNet, single scan | Transparent baseline |
+| B2 | 3DSC-TF | Recent 3D convolution–Transformer comparison |
+| B3 | LongFormer | Recent longitudinal comparison |
+| **PA** | Shared visit encoder + temporal module | Treatment for ablation 1 |
+| **PB** | PA + anatomy-guided auxiliary head | Treatment for ablation 2 |
 
-The central question is whether longitudinal structural change provides reliable predictive value beyond a controlled single-scan model, and whether anatomy-guided training improves representation quality without introducing label or measurement leakage.
+Two ablations carry the claim: **B1 vs PA** isolates longitudinal information, **PA vs
+PB** isolates the auxiliary objective. Each varies one component with cohort, split,
+preprocessing, and evaluation code held fixed.
 
-## Problem Formulation
+The novelty claim is deliberately modest. Alzheimer's classification from MRI is a
+crowded problem and LongFormer (WACV 2024) already does longitudinal 3D MRI. What is
+offered here is the controlled comparison — see
+[`docs/audits/`](docs/audits/ai_novelty_feasibility_audit.md).
 
-- **Input:** One or more longitudinal 3D T1-weighted MRI volumes from the same subject, together with elapsed time between visits.
-- **Output:** A probability that the subject shows Alzheimer's-related cognitive impairment at a target visit.
-- **Inference restriction:** MMSE and similar cognitive-test scores will not be passed to the model as inference features. Clinical labels may be used as training targets.
-- **Constraints:** OASIS-3 access and approval timing, irregular visits, missing labels, class imbalance, 3D GPU memory, and subject-level leakage must be handled explicitly.
+## Three controls
 
-## Proposed Approach
+1. **Cognitive scores never reach inference.** MMSE may inform labels; no model reads
+   one when predicting. ([ADR-0002](docs/adr/0002-no-cognitive-scores-at-inference.md))
+2. **Partitions are assigned by subject**, drawn once, never redrawn. No person's
+   visits, derivatives, or normalization statistics cross a boundary.
+   ([ADR-0001](docs/adr/0001-subject-level-partitioning.md))
+3. **Elapsed time is modeled, not assumed.** Visit spacing is irregular and is given to
+   the model as a continuous input rather than resampled onto a grid.
+   ([ADR-0006](docs/adr/0006-elapsed-time-as-explicit-input.md))
 
-The proposed system will use:
-
-1. A shared 3D CNN or 3D ResNet encoder for each MRI visit.
-2. A temporal attention or Transformer module over visit embeddings.
-3. Elapsed-time information so that irregular visit spacing is modeled explicitly.
-4. An anatomy-guided multi-task head that predicts selected structural quantities during training.
-5. A final MRI-based classification pathway that does not require MMSE at inference time.
-
-The project will compare the proposed model with a conventional single-scan 3D baseline and recent volumetric or longitudinal approaches. The candidate methods and their code availability are documented in the [literature and SOTA survey](docs/literature_sota_survey.md).
-
-## Dataset and Data Policy
-
-The intended dataset is [OASIS-3](https://sites.wustl.edu/oasisbrains/home/oasis-3/), which provides longitudinal neuroimaging and associated clinical observations. Access, approval, and cohort-construction timing are explicit feasibility risks. Raw imaging data, protected health information, checkpoints, and large generated artifacts must not be committed to this repository.
-
-All visits from a subject must remain in exactly one of the train, validation, or test partitions. Preprocessing is expected to include orientation standardization, registration, resampling, brain extraction, intensity normalization, fixed-size cropping or padding, and conservative 3D augmentation.
-
-## Evaluation Plan
-
-Primary metrics will be ROC-AUC, balanced accuracy, macro-F1, impaired-class sensitivity, specificity, and confusion matrices. The two core ablations are:
-
-1. Single-scan model versus the same encoder with longitudinal temporal modeling.
-2. Longitudinal model without anatomy-guided supervision versus the same model with auxiliary anatomical loss.
-
-All principal comparisons will use the same subject-level held-out test set wherever possible. Repeated runs or bootstrap confidence intervals will be used when feasible so that small differences are not over-interpreted. The [AI novelty and feasibility audit](docs/ai_novelty_feasibility_audit.md) records the project's main technical, data, compute, and evaluation risks.
-
-## Repository Structure
+## Layout
 
 ```text
-oasis-alzheimers-dl/
-├── README.md
-├── dl/
-│   ├── README.md                     # Planned implementation organization
-│   ├── .gitignore                    # Imaging, weights, and generated-output rules
-│   └── data/README.md                # OASIS-3 access and data-use notes
-└── docs/
-    ├── proposal/
-    │   ├── project_proposal.pdf
-    │   └── project_proposal.tex
-    ├── literature_sota_survey.md
-    └── ai_novelty_feasibility_audit.md
+├── GLOSSARY.md              Fixed vocabulary — code and docs use these words
+├── docs/
+│   ├── adr/                 Why it is built this way (8 records)
+│   ├── data/                Dataset card, access log, cohort definition
+│   ├── protocol/            What will be run, and how it is judged
+│   ├── survey/              Literature and SOTA review
+│   ├── audits/              Novelty and feasibility audit
+│   └── proposal/            Course submission
+├── src/oasis_dl/            The package — interface seams, unimplemented
+│   ├── data/                Manifest, cohort construction, splits, datasets
+│   ├── preprocessing/       MRI pipeline, anatomy target extraction
+│   ├── models/              Visit encoder, temporal module, heads, arms
+│   ├── training/            Loop, combined objective, seeding
+│   ├── evaluation/          Metrics, subject-level bootstrap
+│   └── cli/                 Hydra entrypoints
+├── configs/                 Composable experiment configs
+├── tests/                   Unit and integration (empty until there is behaviour)
+├── experiments/             Per-run records: config, commit, seed, metrics
+└── data/ results/           Gitignored. Nothing here is ever committed.
 ```
 
-## Project Documents
+## Getting started
 
-- [Course proposal PDF](docs/proposal/project_proposal.pdf)
-- [Course proposal LaTeX source](docs/proposal/project_proposal.tex)
-- [Literature and SOTA survey](docs/literature_sota_survey.md)
-- [AI novelty and feasibility audit](docs/ai_novelty_feasibility_audit.md)
+```bash
+make setup                   # venv + editable install + pre-commit
+export OASIS_ROOT=/path/to/local/oasis   # never inside the repo
+make help                    # every pipeline entrypoint
+```
 
-## Responsible Use
+An ablation is one override:
 
-This is an academic research project. The planned model is not a clinical diagnostic device. Results will be interpreted as research findings and reported with limitations, cohort details, leakage controls, and uncertainty estimates.
+```bash
+python -m oasis_dl.cli.train experiment=proposed_b_anatomy
+```
+
+If a comparison needs more than one override to express, the configs are hiding an
+uncontrolled difference between the arms.
+
+## Data policy
+
+OASIS data is governed by a Data Use Agreement and is **not** redistributed here.
+Imaging volumes, derivatives, subject-identifying manifests, and model weights never
+enter version control — enforced by `.gitignore`, a pre-commit size hook, and a CI job
+that fails on tracked scans or checkpoints. Reproducing this work means applying for
+your own access; this repository ships the code and the cohort *definition*.
+
+## Responsible use
+
+Academic research, not a clinical diagnostic device. Results will be reported with
+cohort details, leakage controls, uncertainty estimates, and limitations. Negative and
+null results go in the report with the same prominence as positive ones — the ablations
+are designed to be informative when they come back negative.
+
+## Documents
+
+- [Experimental protocol](docs/protocol/README.md) — the plan, written before results
+- [Literature and SOTA survey](docs/survey/literature_sota_survey.md)
+- [AI novelty and feasibility audit](docs/audits/ai_novelty_feasibility_audit.md)
+- [Proposal PDF](docs/proposal/project_proposal.pdf) · [LaTeX source](docs/proposal/project_proposal.tex)
+- [Predecessor project](https://github.com/JNR-10/oasis-alzheimers-ml) (CMPE-257)

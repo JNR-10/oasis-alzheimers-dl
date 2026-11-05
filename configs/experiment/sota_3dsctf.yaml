@@ -1,0 +1,21 @@
+# @package _global_
+# B2 — 3DSC-TF (Qiang et al., ESWA 2025). Recent 3D convolution-Transformer comparison.
+#
+# Single-scan by design, so it compares against B1 rather than against the longitudinal
+# arms. The public implementation targets Python 3.5 / PyTorch 1.10; whether it is
+# adapted or reimplemented is recorded when that is decided (docs/survey/).
+#
+# Scope: first to be cut under pressure (docs/protocol/README.md).
+
+experiment:
+  name: sota_3dsctf
+  arm: B2
+  description: >-
+    3DSC-TF adapted to this cohort, single-scan.
+  reference: https://github.com/NWPU-903PR/3DSC-TF
+
+data:
+  longitudinal_subset_only: true
+
+training:
+  collate: single_scan
