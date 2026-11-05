@@ -15,23 +15,35 @@ starting a pipeline.
 Tickets are grouped so three people can work without queueing behind each other. Claim a
 track, not a ticket.
 
-| Track | Owns | Tickets |
+| Track | Owner | Owns | Tickets |
+|---|---|---|---|
+| **A — Data** | `mohiitt` | Access, cohort construction, preprocessing | [#1](https://github.com/JNR-10/oasis-alzheimers-dl/issues/1), [#2](https://github.com/JNR-10/oasis-alzheimers-dl/issues/2), [#13](https://github.com/JNR-10/oasis-alzheimers-dl/issues/13), [#14](https://github.com/JNR-10/oasis-alzheimers-dl/issues/14), [#15](https://github.com/JNR-10/oasis-alzheimers-dl/issues/15), [#16](https://github.com/JNR-10/oasis-alzheimers-dl/issues/16), [#17](https://github.com/JNR-10/oasis-alzheimers-dl/issues/17) |
+| **B — Model** | `JNR-10` | Encoder, temporal module, training loop, arms | [#3](https://github.com/JNR-10/oasis-alzheimers-dl/issues/3), [#5](https://github.com/JNR-10/oasis-alzheimers-dl/issues/5), [#7](https://github.com/JNR-10/oasis-alzheimers-dl/issues/7), [#8](https://github.com/JNR-10/oasis-alzheimers-dl/issues/8), [#9](https://github.com/JNR-10/oasis-alzheimers-dl/issues/9), [#10](https://github.com/JNR-10/oasis-alzheimers-dl/issues/10), [#11](https://github.com/JNR-10/oasis-alzheimers-dl/issues/11) |
+| **C — Protocol** | `NiruSJSU` | Splits, metrics, provenance, reporting | [#4](https://github.com/JNR-10/oasis-alzheimers-dl/issues/4), [#6](https://github.com/JNR-10/oasis-alzheimers-dl/issues/6), [#12](https://github.com/JNR-10/oasis-alzheimers-dl/issues/12), [#21](https://github.com/JNR-10/oasis-alzheimers-dl/issues/21), [#24](https://github.com/JNR-10/oasis-alzheimers-dl/issues/24) |
+
+The experiment runs ([#18](https://github.com/JNR-10/oasis-alzheimers-dl/issues/18)–[#20](https://github.com/JNR-10/oasis-alzheimers-dl/issues/20)) go to `JNR-10`, who builds the arms — running
+them is the natural extension of building them. [#21](https://github.com/JNR-10/oasis-alzheimers-dl/issues/21) then hands the aggregation and
+reporting to `NiruSJSU`, so the person who produced the numbers is not the only person
+who reads them.
+
+[#22](https://github.com/JNR-10/oasis-alzheimers-dl/issues/22) and [#23](https://github.com/JNR-10/oasis-alzheimers-dl/issues/23) are **deliberately unassigned**. They are the first to cut, and
+assigning work that is planned to be dropped manufactures a commitment nobody should
+feel. They get claimed only if Gate 3 passes with time to spare.
+
+### Load, by week
+
+The tracks are not evenly loaded over time, and the mismatch is worth planning around
+rather than discovering:
+
+| Track | Weeks 1–2 | Weeks 3–5 |
 |---|---|---|
-| **A — Data** | Access, cohort construction, preprocessing | [#1](https://github.com/JNR-10/oasis-alzheimers-dl/issues/1), [#2](https://github.com/JNR-10/oasis-alzheimers-dl/issues/2), [#13](https://github.com/JNR-10/oasis-alzheimers-dl/issues/13), [#14](https://github.com/JNR-10/oasis-alzheimers-dl/issues/14), [#15](https://github.com/JNR-10/oasis-alzheimers-dl/issues/15), [#16](https://github.com/JNR-10/oasis-alzheimers-dl/issues/16), [#17](https://github.com/JNR-10/oasis-alzheimers-dl/issues/17) |
-| **B — Model** | Encoder, temporal module, training loop, arms | [#3](https://github.com/JNR-10/oasis-alzheimers-dl/issues/3), [#5](https://github.com/JNR-10/oasis-alzheimers-dl/issues/5), [#7](https://github.com/JNR-10/oasis-alzheimers-dl/issues/7), [#8](https://github.com/JNR-10/oasis-alzheimers-dl/issues/8), [#9](https://github.com/JNR-10/oasis-alzheimers-dl/issues/9), [#10](https://github.com/JNR-10/oasis-alzheimers-dl/issues/10), [#11](https://github.com/JNR-10/oasis-alzheimers-dl/issues/11) |
-| **C — Protocol** | Splits, metrics, provenance, reporting | [#4](https://github.com/JNR-10/oasis-alzheimers-dl/issues/4), [#6](https://github.com/JNR-10/oasis-alzheimers-dl/issues/6), [#12](https://github.com/JNR-10/oasis-alzheimers-dl/issues/12), [#21](https://github.com/JNR-10/oasis-alzheimers-dl/issues/21), [#24](https://github.com/JNR-10/oasis-alzheimers-dl/issues/24) |
+| A — `mohiitt` | Light — only [#1](https://github.com/JNR-10/oasis-alzheimers-dl/issues/1) and [#2](https://github.com/JNR-10/oasis-alzheimers-dl/issues/2), both small | Heavy — the cohort and preprocessing gate everything downstream |
+| B — `JNR-10` | Heavy — the longest internal chain, ending in [#8](https://github.com/JNR-10/oasis-alzheimers-dl/issues/8) | Moderate — running arms that already work |
+| C — `NiruSJSU` | Moderate — [#4](https://github.com/JNR-10/oasis-alzheimers-dl/issues/4) and [#6](https://github.com/JNR-10/oasis-alzheimers-dl/issues/6) need no data | Heavy — [#21](https://github.com/JNR-10/oasis-alzheimers-dl/issues/21) and [#24](https://github.com/JNR-10/oasis-alzheimers-dl/issues/24) land in the final week |
 
-The experiment runs ([#18](https://github.com/JNR-10/oasis-alzheimers-dl/issues/18)–[#20](https://github.com/JNR-10/oasis-alzheimers-dl/issues/20)) are shared
-— by then the pipeline exists and the work is running it, watching it, and reading what
-comes out.
-
-Fill in names once tracks are claimed:
-
-| Track | Owner |
-|---|---|
-| A — Data | |
-| B — Model | |
-| C — Protocol | |
+`mohiitt` should float onto Track B or C for the first fortnight. Track A has the least
+to do early and the most to do under Gate 2 pressure, so the spare capacity is real and
+is best spent where the week-2 bottleneck is.
 
 ## Calendar
 
