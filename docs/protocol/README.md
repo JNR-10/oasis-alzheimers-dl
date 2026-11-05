@@ -1,5 +1,8 @@
 # Experimental Protocol
 
+The plan, the metrics, and what would falsify the hypothesis. Schedule, track ownership
+and the scope gates live in [`implementation-plan.md`](implementation-plan.md).
+
 Written before results exist. Amendments are appended with dates rather than edited in
 place, so the distance between what was planned and what was run stays visible.
 

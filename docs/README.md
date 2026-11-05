@@ -6,6 +6,7 @@
 | [`adr/`](adr/) | Why was it built this way? |
 | [`data/`](data/) | What data, obtained how, under what terms? |
 | [`protocol/`](protocol/) | What exactly will be run, and how is it judged? |
+| [`protocol/implementation-plan.md`](protocol/implementation-plan.md) | Who builds what, by when, and where scope gets cut |
 | [`survey/`](survey/) | What does the prior work already do? |
 | [`audits/`](audits/) | What could go wrong, and what is the novelty claim? |
 | [`proposal/`](proposal/) | What was submitted to the course? |

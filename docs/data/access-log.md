@@ -3,15 +3,16 @@
 The critical path. OASIS-3 access gates every experiment in this project, so its status
 is tracked here rather than remembered.
 
-**Fill this in. The dates below are placeholders and nothing here has been verified.**
+**Status: application submitted, approval pending.** The dates below still need filling
+in by whoever submitted it — they are not known to the repository yet.
 
 ## OASIS-3
 
 | Field | Value |
 |---|---|
-| Application submitted | _unrecorded_ |
+| Application submitted | submitted — _date to fill in_ |
 | Submitted by | _unrecorded_ |
-| Approval received | _pending_ |
+| Approval received | **pending** |
 | DUA accepted on | _pending_ |
 | Download completed | _pending_ |
 | Local storage path | recorded in `.env`, not in git |
