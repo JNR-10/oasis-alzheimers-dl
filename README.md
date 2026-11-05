@@ -66,6 +66,7 @@ offered here is the controlled comparison — see
 ## Layout
 
 ```text
+├── AGENTS.md                Instructions for coding agents (CLAUDE.md imports it)
 ├── GLOSSARY.md              Fixed vocabulary — code and docs use these words
 ├── docs/
 │   ├── adr/                 Why it is built this way (8 records)
