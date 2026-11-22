@@ -154,7 +154,7 @@ _Avoid_: backbone, feature extractor, CNN
 
 **Backbone**:
 The interchangeable library network a visit encoder wraps, named in config as
-`encoder.backbone` (`resnet18`, `densenet121`). Not a synonym for the visit encoder:
+`encoder.backbone` (`vit_base_16`, `resnet18`, `densenet121`). Not a synonym for the visit encoder:
 the encoder is this project's component and the backbone is what sits inside it, which
 is why the encoder may be called shared and the backbone may be swapped.
 _Avoid_: model, architecture (for this specific meaning)

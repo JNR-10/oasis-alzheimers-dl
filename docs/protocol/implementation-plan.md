@@ -150,3 +150,50 @@ A cohort that is overwhelmingly single-visit cannot support a longitudinal claim
 regardless of architecture. If that is what the data says, the team needs to know at Gate
 2 and not in week 5, and the honest response is to report it as a finding about cohort
 feasibility rather than to train the arms anyway.
+
+---
+
+## Amendment, 2026-11-22 — the encoder decision is taken
+
+The open question above ("33.2M parameters is a heavy model for 300 subjects") is
+settled by [ADR-0011](../adr/0011-pretrained-vit-encoder.md), and not in either
+direction the section anticipated.
+
+Both options on the table were randomly initialized, so both traded capacity against
+generalization. The configured encoder is now a **3D ViT-B/16 initialized from
+BrainIAC's self-supervised weights** (117.1M parameters), which sidesteps the trade: the
+representation comes from ~32k brain MRIs rather than from 450 training sequences.
+`resnet18` is kept as the from-scratch reference and still runs.
+
+Three consequences for the plan as written:
+
+- **The encoder is selected once at the config root** (`configs/encoder/`), not inside
+  each model config. The section's warning that the choice "must be identical across
+  every arm" is now enforced by `tests/unit/test_configs.py` rather than by discipline.
+- **BrainIAC's pretraining corpus includes OASIS-3 and OASIS-2.** The reasoning for
+  proceeding anyway, and the alternatives rejected, are in ADR-0011. The short version:
+  it is self-supervised, so no label leaks, and it is constant across arms, so it
+  cancels in the contrasts. Absolute numbers are not comparable with from-scratch
+  literature and the report must say so.
+- **Preprocessing now has a fixed target.** BrainIAC's template and a resize to 96³,
+  rather than a free choice of 2 mm resampling. This lands on [#15] and constrains, but
+  does not remove, the registration question in [#16] — within-subject alignment is
+  still the open part.
+
+The footprint numbers remain generated, not typed:
+`tests/unit/test_encoder.py::TestMemoryFootprint` now covers `vit_base_16` alongside the
+ResNets.
+
+### One new cost, and where it lands
+
+`vit_base_16` at 96³ is over a second per forward pass on a laptop CPU, so the real arms
+([#18], [#19], [#20]) need a GPU to be worth starting. `configs/encoder/vit_tiny_smoke.yaml`
+is the same code path at 2.5M parameters, for proving a training loop runs end to end on
+any machine before it is queued on real hardware. No reported result comes from it, and
+the encoder name is carried into every run record so the two cannot be confused.
+
+[#15]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/15
+[#16]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/16
+[#18]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/18
+[#19]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/19
+[#20]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/20

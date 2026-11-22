@@ -38,11 +38,23 @@ split_ratios: [0.60, 0.20, 0.20]
 # --- preprocessing (docs/protocol/preprocessing.md) ---
 # Identical across every arm. A difference here would confound the ablations.
 #
-# 2 mm / 96^3 under ADR-0010. Cost scales with voxel count, so this is the largest
-# single compute lever available. The signal here is gross atrophy — at 2 mm the
-# hippocampus still spans several hundred voxels.
-voxel_size_mm: [2.0, 2.0, 2.0]
+# 96^3 under ADR-0010. Cost scales with voxel count, so this is the largest single
+# compute lever available. The signal here is gross atrophy — at this resolution the
+# hippocampus still spans several hundred voxels. The encoder reads this shape by
+# interpolation, so the two cannot drift apart.
 volume_shape: [96, 96, 96]
+
+# ADR-0011 constrains how that 96^3 is reached. The encoder's pretrained weights expect
+# volumes registered to the BrainIAC template and resized, not resampled to an isotropic
+# 2 mm — and that template is not isotropic, so the effective voxel size is anisotropic
+# and no longer a free parameter. The real figure comes from the template header in #15;
+# it is left unset rather than carried over, because 2.0 here would be a plausible
+# number that is no longer true.
+voxel_size_mm: _tbd_   # #15, constrained by ADR-0011
+
+# Still open in #16, and still the right question: registering each scan independently
+# to a template risks absorbing the within-subject atrophy the temporal module exists to
+# read. ADR-0011 fixes *which* template, not whether the subject-level step comes first.
 registration_target: within_subject_then_template
 intensity_normalization: zscore
 
