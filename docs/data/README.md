@@ -1,20 +1,27 @@
 # Dataset Card — OASIS-3
 
-Status of this document: written before access was confirmed. Figures quoted from the
-OASIS-3 publication describe the released dataset, **not** our cohort. Our cohort
-numbers are unknown until [`cohort-definition.md`](cohort-definition.md) is filled in
-from the real data, and nothing in this project should quote a cohort size until then.
+Status: access granted, cohort not yet built. Figures below describe the **released
+dataset**, not our cohort. Our cohort numbers stay unknown until
+[`cohort-definition.md`](cohort-definition.md) is filled in from the real data, and
+nothing in this project quotes a cohort size until then.
 
 ## Source
 
 **OASIS-3: Longitudinal Neuroimaging, Clinical, and Cognitive Dataset for Normal Aging
 and Alzheimer Disease.** LaMontagne et al., 2019. DOI
 [10.1101/2019.12.13.19014902](https://doi.org/10.1101/2019.12.13.19014902).
-Distribution: <https://sites.wustl.edu/oasisbrains/home/oasis-3/>
+Distribution: <https://sites.wustl.edu/oasisbrains/home/oasis-3/>, served through XNAT
+Central.
 
 Longitudinal by design — subjects are imaged and assessed repeatedly over years, which
 is why this project can ask its question at all and why the predecessor's OASIS-1
 cohort could not.
+
+The distribution has grown since publication: the paper reports 1,098 participants and
+2,168 MR sessions, the live site 1,378 participants and 2,842 MR sessions. The site is
+also internally inconsistent — 1,378 in prose, 1,379 in its statistics block, and a
+755 + 622 normal/impaired breakdown that sums to 1,377. **Cite none of them.** The
+number that goes in the report is the one computed from our own download.
 
 ## Terms of use
 
@@ -37,6 +44,22 @@ consequences bind this repository:
 | MMSE | Cohort description only — excluded from inference by [ADR-0002](../adr/0002-no-cognitive-scores-at-inference.md) |
 | Imaging derivatives | Source of anatomy targets — FreeSurfer outputs shipped with OASIS-3, per [ADR-0009](../adr/0009-anatomy-targets-from-oasis3-freesurfer.md) |
 
+**Not downloaded:** PET and CT. They are most of OASIS-3 by volume and are read by no
+arm.
+
+## Scale and sampling
+
+The full cohort is affordable to store and not to train on repeatedly inside the weeks
+remaining. Under
+[ADR-0010](../adr/0010-subsampled-cohort-and-reduced-resolution.md) the project trains
+on **300 subjects sampled at subject level**, at 2 mm isotropic, 96³, with 3 visits per
+sequence.
+
+The sample is drawn once with a recorded seed, **before** partitioning and **before**
+preprocessing. Drawing it before preprocessing is the point: that is where the one-time
+CPU cost lives. Raising the sample size later produces a different cohort rather than a
+larger one.
+
 ## Open questions, to settle before the cohort is fixed
 
 1. **Which derivatives ship with OASIS-3, and in what form?** **Answered — see
@@ -53,17 +76,28 @@ consequences bind this repository:
 2. **How far apart can an imaging session and its clinical assessment be** and still
    yield a usable label? Open parameter in [ADR-0004](../adr/0004-label-definition-and-target-visit.md).
 3. **How many subjects have two or more usable, labeled T1 visits?** This number, not
-   the headline dataset size, determines whether the longitudinal arm is trainable.
+   the headline dataset size, determines whether the longitudinal arm is trainable, and
+   whether 300 sampled subjects is a sample or the whole eligible pool.
 4. **Scanner and protocol heterogeneity across sessions.** OASIS-3 spans multiple
    scanners; if scanner correlates with label, it is a shortcut and must be reported.
-   FreeSurfer version varies with scanner strength (see ADR-0009), so scanner and
+   FreeSurfer version varies with scanner strength (see ADR-0010), so scanner and
    derivative version are confounded and both are recorded in the manifest.
 
 ## Related datasets
 
+The OASIS releases are siblings, not versions. XNAT Central's documentation states they
+**should not be combined**, because subjects may overlap across studies. That rules out
+using one as an external validation set for a model trained on another.
+
 **OASIS-2** — the declared fallback under [ADR-0003](../adr/0003-oasis3-primary-oasis2-fallback.md).
-Longitudinal, roughly 150 subjects and 373 sessions. Used by LongFormer, which makes
-comparison easier even as the small size limits what can be concluded.
+Longitudinal, 150 subjects and 373 sessions, ~18 GB. Used by LongFormer, which makes
+comparison easier even as the small size limits what can be concluded. Access is in
+hand; that makes the fallback cheap to execute, not a second cohort to merge.
 
 **OASIS-1** — the predecessor project's dataset. Cross-sectional, so it cannot support
 a longitudinal question. Relevant here only as the source of prior findings.
+
+**OASIS-4** — a clinical cohort of 663 participants and 676 MR sessions, drawn from
+memory-clinic referrals rather than community volunteers. Effectively single-visit at
+~1.02 sessions per subject, so it cannot train the longitudinal arms. Named here
+because a reader who knows the OASIS family will ask why it is absent.

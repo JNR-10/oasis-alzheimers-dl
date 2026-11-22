@@ -1,8 +1,10 @@
 """The seven-stage MRI preprocessing pipeline of docs/protocol/preprocessing.md.
 
-Unimplemented — needs real scans. The contract is written out because preprocessing
-failures silently change the cohort, which is how a pipeline quietly becomes a
-different experiment.
+Unimplemented. The contract is written out because preprocessing failures silently
+change the cohort, which is how a pipeline quietly becomes a different experiment.
+
+Runs over the sampled subjects only (ADR-0010), never the whole download. Most of the
+project's one-time CPU cost is in these stages, and the sample is what bounds it.
 
 Stage order is load-bearing: bias correction before brain extraction (the field biases
 the extraction), extraction before registration (non-brain tissue misleads alignment).
@@ -35,7 +37,10 @@ class PreprocessingConfig:
     config is fixed before the first run and its version recorded with every result.
 
     Attributes:
-        voxel_size_mm: Target isotropic spacing.
+        voxel_size_mm: Target isotropic spacing. 2 mm under ADR-0010 — cost scales
+            with voxel count, so this is the largest compute lever in the project.
+            Gross atrophy survives it; fine cortical detail does not, and is not what
+            separates the labels.
         volume_shape: Fixed output dimensions after crop or pad.
         registration_target: ``"template"`` registers each scan to a common template;
             ``"within_subject_then_template"`` aligns a subject's visits to each other
@@ -46,8 +51,8 @@ class PreprocessingConfig:
         intensity_normalization: ``"zscore"`` or ``"percentile"``.
     """
 
-    voxel_size_mm: tuple[float, float, float] = (1.5, 1.5, 1.5)
-    volume_shape: tuple[int, int, int] = (128, 128, 128)
+    voxel_size_mm: tuple[float, float, float] = (2.0, 2.0, 2.0)
+    volume_shape: tuple[int, int, int] = (96, 96, 96)
     registration_target: str = "within_subject_then_template"
     intensity_normalization: str = "zscore"
 
@@ -78,4 +83,4 @@ def preprocess_session(
         One result per stage attempted. Stops at the first failure — later stages on a
         failed scan produce output that looks valid and is not.
     """
-    raise NotImplementedError("Blocked on OASIS-3 access. See docs/data/access-log.md.")
+    raise NotImplementedError("Unimplemented. See issue #15.")

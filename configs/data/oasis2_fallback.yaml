@@ -3,6 +3,9 @@
 #
 # OASIS-2 is far smaller (~150 subjects, 373 sessions). Results do not transfer from
 # OASIS-3 — a fallback resets the baselines rather than inheriting their numbers.
+#
+# Inherits resolution, sequence length and split ratios from the primary config so that
+# a fallback changes the dataset and nothing else.
 
 defaults:
   - oasis3_longitudinal
@@ -11,6 +14,6 @@ name: oasis2_fallback
 root: ${paths.data_root}/raw/oasis2
 manifest_path: ${paths.data_root}/manifests/oasis2_cohort.csv
 
-# Smaller cohort, so a larger validation share — a 15% validation partition of 150
-# subjects is too small to select a threshold on.
-split_ratios: [0.60, 0.20, 0.20]
+# No sampling: OASIS-2 has ~150 subjects, which is already below the ADR-0010 budget.
+sampling:
+  max_subjects: null

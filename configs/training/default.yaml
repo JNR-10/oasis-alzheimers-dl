@@ -1,13 +1,17 @@
 # One training configuration, shared by every arm, so that no arm receives a budget,
 # schedule, or stopping rule another did not.
 
-max_epochs: 100
+# A bound, not a target: early stopping fires long before this on a 300-subject
+# cohort. Lowered under ADR-0010 so a stuck run cannot eat an afternoon.
+max_epochs: 60
 learning_rate: 1.0e-4
 weight_decay: 1.0e-4
 
-# Small by necessity: 3D volumes times sequence length dominate GPU memory.
-batch_size: 2
-accumulate_grad_batches: 8
+# 3D volumes times sequence length dominate GPU memory. 96^3 at 3 visits (ADR-0010)
+# fits roughly 4x what 128^3 at 5 visits did; the accumulation factor drops to match so
+# the effective batch stays 16 and the arms remain comparable to each other.
+batch_size: 4
+accumulate_grad_batches: 4
 mixed_precision: true
 num_workers: 4
 

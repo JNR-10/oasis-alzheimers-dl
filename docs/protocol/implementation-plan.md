@@ -5,10 +5,19 @@ one per slice, each declaring the issues that block it. This document holds what
 issues cannot: the calendar, who runs which track, and the gates where scope gets cut.
 
 The ordering principle behind the ticket breakdown: **build the whole pipeline against a
-synthetic cohort first.** OASIS-3 approval is pending and its arrival date is not ours to
-control, but almost nothing is genuinely blocked on it. A team that waits loses two to
-three weeks of five. When data lands, the work is swapping in a cohort source, not
-starting a pipeline.
+synthetic cohort first.** Almost nothing is genuinely blocked on real data, and a team
+that waits for it loses weeks it does not have. Swapping in a real cohort source at the
+end is a smaller job than starting a pipeline.
+
+**Access is no longer the constraint — compute is.** OASIS-3 and OASIS-2 are both in
+hand as of 2026-11-22. What binds now is GPU time, which
+[ADR-0010](../adr/0010-subsampled-cohort-and-reduced-resolution.md) answers by training
+on 300 sampled subjects at 2 mm / 96³ with 3 visits per sequence — roughly an order of
+magnitude cheaper per run than the original configuration.
+
+The decision that saves the most is an ordering one: **sample subjects before
+preprocessing, not after.** Preprocessing is the dominant one-time CPU cost, and
+processing scans that will never be trained on spends all of it for nothing.
 
 ## Three tracks
 
@@ -45,6 +54,13 @@ rather than discovering:
 to do early and the most to do under Gate 2 pressure, so the spare capacity is real and
 is best spent where the week-2 bottleneck is.
 
+**Amended 2026-11-22.** Access arrived in week 3, which pulls Track A's heavy work
+forward rather than leaving it stacked against Gate 2. [#1](https://github.com/JNR-10/oasis-alzheimers-dl/issues/1)
+is closed, [#2](https://github.com/JNR-10/oasis-alzheimers-dl/issues/2) is unblocked and
+small, and the download plus the subject sample can start immediately. The ordering that
+matters: **draw the sample before preprocessing anything** — processing scans that the
+sample will discard spends the compute saving the whole plan now rests on.
+
 ## Calendar
 
 Five weeks. Dates are the Thursday of each week.
@@ -71,11 +87,18 @@ If not, the pipeline is the bottleneck, not the science. Drop
 [#22](https://github.com/JNR-10/oasis-alzheimers-dl/issues/22) and [#23](https://github.com/JNR-10/oasis-alzheimers-dl/issues/23) immediately and move Track
 A onto Track B's work until it is.
 
-**Gate 2 — end of week 3. Has OASIS-3 access arrived?**
-If not, trigger the [ADR-0003](../adr/0003-oasis3-primary-oasis2-fallback.md) fallback to
-OASIS-2 and record it in [`../data/access-log.md`](../data/access-log.md) with date and
-cause. OASIS-2 is far smaller and resets the baselines; it does not inherit numbers. A
-fallback declared in week 3 is recoverable, in week 4 it is not.
+**Gate 2 — end of week 3. Does the cohort support a longitudinal claim?**
+Access is settled, so this gate asks the question that still decides the project: how
+many sampled subjects have two or more usable, labelled T1 visits
+([#14](https://github.com/JNR-10/oasis-alzheimers-dl/issues/14))?
+
+If that number is too small, no architecture rescues it, and the honest response is to
+report it as a finding about cohort feasibility rather than to train the arms anyway.
+Two levers before that: raise `max_subjects` if GPU time allows, or trigger the
+[ADR-0003](../adr/0003-oasis3-primary-oasis2-fallback.md) fallback to OASIS-2 and record
+it in [`../data/access-log.md`](../data/access-log.md) with date and cause. Raising the
+sample produces a new cohort rather than a bigger one, so it is a restart of anything
+already trained — cheap in week 3, not in week 4.
 
 **Gate 3 — end of week 4. Is ablation 1 answered?**
 If not, cut everything optional and run [#20](https://github.com/JNR-10/oasis-alzheimers-dl/issues/20) and

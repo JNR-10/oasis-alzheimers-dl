@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 def main(cfg: DictConfig) -> None:
     """Preprocess every session in the manifest and record per-stage outcomes."""
     log.info("preprocessing to %s voxels, shape %s", cfg.data.voxel_size_mm, cfg.data.volume_shape)
-    raise NotImplementedError("Blocked on OASIS-3 access. See docs/data/access-log.md.")
+    raise NotImplementedError("Unimplemented. See issue #15.")
 
 
 if __name__ == "__main__":

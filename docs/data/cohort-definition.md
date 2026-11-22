@@ -13,14 +13,36 @@ stated as a check does not belong here.
 | # | Rule | Sessions removed |
 |---|---|---|
 | 1 | Session has a usable T1-weighted scan | _tbd_ |
-| 2 | Scan passes preprocessing without failure | _tbd_ |
-| 3 | A clinical assessment exists within the admissible gap (ADR-0004) | _tbd_ |
-| 4 | Subject retains at least one eligible target visit | _tbd_ |
+| 2 | A clinical assessment exists within the admissible gap (ADR-0004) | _tbd_ |
+| 3 | Subject survives the ADR-0010 subject sample | _tbd_ |
+| 4 | Scan passes preprocessing without failure | _tbd_ |
+| 5 | Subject retains at least one eligible target visit | _tbd_ |
+
+Rule 3 sits **before** rule 4 on purpose. Sampling precedes preprocessing, so sessions
+removed by the sample are never processed at all — that ordering is where the project's
+compute saving comes from. Sessions dropped by rule 3 are recorded as sampled-out, not
+as preprocessing failures; conflating the two would make the pipeline look like it was
+failing on hundreds of scans it never touched.
 
 The longitudinal arm additionally requires subjects with two or more eligible visits.
 That subset is reported separately, because the single-scan and longitudinal arms must
 be compared on the **same subjects** or the first core ablation confounds the
 architecture change with a cohort change.
+
+## Subject sample (ADR-0010)
+
+Drawn once, stratified by label, before partitioning. Recorded here and in the manifest.
+
+| Field | Value |
+|---|---|
+| Eligible subjects before sampling | _tbd_ |
+| `max_subjects` | _tbd_ |
+| Sample seed | _tbd_ |
+| Drawn on | _tbd_ |
+| Label balance before sampling | _tbd_ |
+| Label balance after sampling | _tbd_ |
+
+The two balance rows exist so a drift between them is visible rather than assumed away.
 
 ## Resulting cohort
 

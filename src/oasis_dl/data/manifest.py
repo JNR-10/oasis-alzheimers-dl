@@ -32,6 +32,10 @@ COLUMNS: Final[tuple[str, ...]] = (
 sessions stay in the file rather than being dropped, because the count of what was
 removed and why is part of the cohort definition
 (``docs/data/cohort-definition.md``) and cannot be recovered once discarded.
+
+Sessions dropped by the ADR-0010 subject sample carry their own reason, distinct from
+a preprocessing failure. They were never preprocessed, and recording them as failures
+would make the pipeline look broken on scans it never opened.
 """
 
 

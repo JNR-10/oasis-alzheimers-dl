@@ -54,6 +54,17 @@ and recorded in a manifest; changing it invalidates every result computed before
 A stated, checkable condition a session must meet to become a visit.
 _Avoid_: filter, criterion
 
+**Subject sample**:
+The subset of eligible subjects the project actually trains on, drawn once at subject
+level with a recorded seed. Distinct from the cohort, which is what survives the
+inclusion rules, and drawn before the partition rather than from it.
+_Avoid_: subset, batch, selection
+
+**Sampled out**:
+Of a subject or session: excluded by the subject sample rather than by an inclusion
+rule. A sampled-out scan is never preprocessed, so it is not a preprocessing failure.
+_Avoid_: dropped, filtered, skipped
+
 **Manifest**:
 The file that pins the cohort — which subjects, which visits, which partition, which
 label. The single source of truth for what was trained on.

@@ -96,3 +96,37 @@ core ablations last:
 
 The last thing to go is the controlled comparison, because a well-controlled negative
 result is a finding and an uncontrolled positive one is not.
+
+---
+
+## Amendments
+
+### 2026-11-22 — Subsampled cohort at reduced resolution
+
+OASIS-3 access arrived. The full cohort is affordable to store but not to train on
+repeatedly in the weeks remaining, so the protocol is amended under
+[ADR-0010](../adr/0010-subsampled-cohort-and-reduced-resolution.md): **300 subjects
+sampled at subject level, 2 mm isotropic, 96³ volumes, 3 visits per sequence.**
+
+This exercises step 3 of *Scope under pressure* above — reduce resolution and sequence
+length before reducing the number of arms — ahead of the pressure rather than under it.
+Steps 1 and 2 remain available and unspent.
+
+Two consequences change how results must be read, and neither is cosmetic:
+
+**The study is powered for large effects only.** Roughly 60 test subjects means wide
+subject-level bootstrap intervals. Every point estimate is reported with its interval,
+and an ablation that comes back null is reported as *underpowered* rather than as
+evidence that the component does not help. Concretely: a null is only informative here
+if the interval excludes effects large enough to matter, and the report says which
+effects it could not have detected.
+
+**The sample is a draw, and draws are frozen.** Subjects are sampled once with a
+recorded seed, before partitioning and before preprocessing, and never redrawn. Raising
+the sample size later produces a different cohort; its numbers do not merge with these
+and the difference between them is not an ablation. This is the same discipline as
+ADR-0001 applied one step earlier, and it is easier to violate because the subjects that
+vanish leave no trace in the partition.
+
+Nothing else moves. The question, the five arms, the two core ablations, the three
+controls, and the metric set are unchanged.

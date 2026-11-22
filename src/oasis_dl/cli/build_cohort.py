@@ -30,7 +30,7 @@ def main(cfg: DictConfig) -> None:
     log.info("partition seed: %s", cfg.data.split_seed)
 
     raise NotImplementedError(
-        "Blocked on OASIS-3 access (docs/data/access-log.md) and on ADR-0004 reaching "
+        "Blocked on ADR-0004 reaching "
         "accepted status. The partitioning this will call — oasis_dl.data.splits — is "
         "written and tested; the cohort construction that feeds it is not."
     )

@@ -12,15 +12,20 @@ Jainil Narendrakumar Rana · Nirupam Narayana Maladi · Mohit Manoj Barade
 
 ## Status
 
-**Pre-data.** The repository holds the proposal, the literature survey, the feasibility
-audit, the experimental protocol, and the implementation scaffold. No model has been
-trained and no result exists.
+**Pre-training.** The repository holds the proposal, the literature survey, the
+feasibility audit, the experimental protocol, and the implementation scaffold. No model
+has been trained and no result exists.
 
-The critical path is OASIS-3 access, tracked in
-[`docs/data/access-log.md`](docs/data/access-log.md). Every module under
-`src/oasis_dl/` is a typed interface with a documented contract and an unimplemented
-body — deliberately, so that the structure can be reviewed before the code commits to
-it, and so nothing here can be mistaken for a working pipeline.
+OASIS-3 access is granted ([`docs/data/access-log.md`](docs/data/access-log.md)), so the
+binding constraint is now compute rather than data. The project trains on a fixed
+300-subject sample at 2 mm / 96³ with 3 visits per sequence
+([ADR-0010](docs/adr/0010-subsampled-cohort-and-reduced-resolution.md)) — roughly an
+order of magnitude cheaper per run, with the sample drawn once before preprocessing so
+that no scan is processed that will not be trained on.
+
+Every module under `src/oasis_dl/` is a typed interface with a documented contract and
+an unimplemented body — deliberately, so that the structure can be reviewed before the
+code commits to it, and so nothing here can be mistaken for a working pipeline.
 
 ## The study
 
