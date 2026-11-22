@@ -1,0 +1,182 @@
+"""The synthetic cohort generator.
+
+This cohort stands in for OASIS-3 everywhere downstream, so the properties tested here
+are the ones the rest of the pipeline assumes: reproducibility from a seed, irregular
+visit spacing, a controllable label balance, and sequences that cannot contain the
+future.
+
+It carries a weak learnable signal on purpose. A cohort of pure noise cannot tell a
+training loop that silently fails to optimise apart from one that works, and that is
+exactly the failure #8 exists to rule out.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from oasis_dl.data.synthetic import SyntheticCohort, SyntheticCohortSpec
+from oasis_dl.types import Label
+
+
+@pytest.fixture
+def spec() -> SyntheticCohortSpec:
+    return SyntheticCohortSpec(n_subjects=24, seed=7)
+
+
+@pytest.fixture
+def cohort(tmp_path: Path, spec: SyntheticCohortSpec) -> SyntheticCohort:
+    return SyntheticCohort(root=tmp_path, spec=spec).generate()
+
+
+class TestReproducibility:
+    def test_the_same_seed_gives_the_same_sessions(self, tmp_path: Path) -> None:
+        a = SyntheticCohort(tmp_path / "a", SyntheticCohortSpec(seed=3)).generate()
+        b = SyntheticCohort(tmp_path / "b", SyntheticCohortSpec(seed=3)).generate()
+        left, right = a.sessions(), b.sessions()
+        assert list(left["session_id"]) == list(right["session_id"])
+        assert list(left["days_from_entry"]) == list(right["days_from_entry"])
+        # .equals rather than ==: unlabeled sessions are NaN, and NaN != NaN.
+        assert left["label"].equals(right["label"])
+
+    def test_a_different_seed_gives_a_different_cohort(self, tmp_path: Path) -> None:
+        a = SyntheticCohort(tmp_path / "a", SyntheticCohortSpec(seed=3)).generate()
+        b = SyntheticCohort(tmp_path / "b", SyntheticCohortSpec(seed=4)).generate()
+        assert list(a.sessions()["days_from_entry"]) != list(b.sessions()["days_from_entry"])
+
+
+class TestCohortShape:
+    def test_visit_counts_stay_inside_the_configured_range(self, tmp_path: Path) -> None:
+        spec = SyntheticCohortSpec(n_subjects=40, min_visits=1, max_visits=4, seed=1)
+        sessions = SyntheticCohort(tmp_path, spec).generate().sessions()
+        counts = sessions.groupby("subject_id").size()
+        assert counts.min() >= 1
+        assert counts.max() <= 4
+
+    def test_some_subjects_have_more_than_one_visit(self, cohort: SyntheticCohort) -> None:
+        """Otherwise the longitudinal arm has nothing to read."""
+        counts = cohort.sessions().groupby("subject_id").size()
+        assert (counts > 1).any()
+
+    def test_visit_spacing_is_irregular_not_a_grid(self, cohort: SyntheticCohort) -> None:
+        sessions = cohort.sessions().sort_values(["subject_id", "days_from_entry"])
+        gaps = sessions.groupby("subject_id")["days_from_entry"].diff().dropna()
+        assert len(gaps.unique()) > 1, "visit spacing is a uniform grid"
+
+    def test_label_balance_is_near_the_configured_fraction(self, tmp_path: Path) -> None:
+        spec = SyntheticCohortSpec(n_subjects=300, impaired_fraction=0.25, seed=11)
+        sessions = SyntheticCohort(tmp_path, spec).generate().sessions()
+        labeled = sessions[sessions["label"].notna()]
+        observed = (labeled["label"] == int(Label.IMPAIRED)).mean()
+        assert 0.15 < observed < 0.35, f"impaired fraction was {observed:.2f}"
+
+
+class TestScansOnDisk:
+    def test_every_session_has_a_readable_volume_at_the_configured_shape(
+        self, tmp_path: Path
+    ) -> None:
+        import nibabel as nib
+
+        spec = SyntheticCohortSpec(n_subjects=4, volume_shape=(12, 14, 16), seed=2)
+        cohort = SyntheticCohort(tmp_path, spec).generate()
+        for row in cohort.sessions().itertuples():
+            path = cohort.scan_path(row.subject_id, row.session_id)
+            assert path.exists(), f"missing volume for {row.session_id}"
+            assert nib.load(path).shape == (12, 14, 16)
+
+
+class TestSequences:
+    def test_every_labeled_visit_becomes_one_sequence(self, cohort: SyntheticCohort) -> None:
+        sessions = cohort.sessions()
+        n_labeled = int(sessions["label"].notna().sum())
+        assert len(cohort.sequences()) == n_labeled
+
+    def test_a_sequence_never_contains_a_visit_after_its_target(
+        self, cohort: SyntheticCohort
+    ) -> None:
+        """The future-leak invariant, checked on real generated data."""
+        for sequence in cohort.sequences():
+            target_day = sequence.target_visit.days_from_entry
+            assert all(v.days_from_entry <= target_day for v in sequence.visits)
+
+    def test_max_length_truncates_from_the_oldest_end(self, cohort: SyntheticCohort) -> None:
+        """Truncation drops history, never the target visit."""
+        full = {s.target_visit.session_id: s for s in cohort.sequences()}
+        capped = {s.target_visit.session_id: s for s in cohort.sequences(max_length=2)}
+        assert full.keys() == capped.keys()
+        for session_id, short in capped.items():
+            assert len(short.visits) <= 2
+            assert short.target_visit == full[session_id].target_visit
+            assert short.visits == full[session_id].visits[-len(short.visits) :]
+
+    def test_all_sequences_belong_to_one_subject_each(self, cohort: SyntheticCohort) -> None:
+        for sequence in cohort.sequences():
+            assert {v.subject_id for v in sequence.visits} == {sequence.subject_id}
+
+
+class TestLearnableSignal:
+    def test_impaired_scans_differ_from_normal_ones_in_the_signal_region(
+        self, tmp_path: Path
+    ) -> None:
+        """A pipeline that cannot learn this cohort is broken, not unlucky.
+
+        Without a signal, a training loop that never updates its weights produces the
+        same ~0.5 AUC as one that works, and #8 could not tell them apart.
+        """
+        import nibabel as nib
+        import numpy as np
+
+        spec = SyntheticCohortSpec(n_subjects=120, seed=5)
+        cohort = SyntheticCohort(tmp_path, spec).generate()
+        sessions = cohort.sessions()
+        labeled = sessions[sessions["label"].notna()]
+
+        means: dict[int, list[float]] = {0: [], 1: []}
+        for row in labeled.itertuples():
+            volume = np.asarray(nib.load(cohort.scan_path(row.subject_id, row.session_id)).dataobj)
+            d, h, w = volume.shape
+            centre = volume[d // 3 : 2 * d // 3, h // 3 : 2 * h // 3, w // 3 : 2 * w // 3]
+            means[int(row.label)].append(float(centre.mean()))
+
+        assert means[0] and means[1]
+        normal, impaired = np.mean(means[0]), np.mean(means[1])
+        assert impaired < normal, (
+            f"impaired centre mean {impaired:.4f} should sit below normal "
+            f"{normal:.4f} — the atrophy proxy is absent"
+        )
+
+    def test_the_signal_can_be_switched_off(self, tmp_path: Path) -> None:
+        """Pure noise stays available, for testing that a model cannot cheat."""
+        import nibabel as nib
+        import numpy as np
+
+        spec = SyntheticCohortSpec(n_subjects=40, signal_strength=0.0, seed=5)
+        cohort = SyntheticCohort(tmp_path, spec).generate()
+        sessions = cohort.sessions()
+        labeled = sessions[sessions["label"].notna()]
+        means: dict[int, list[float]] = {0: [], 1: []}
+        for row in labeled.itertuples():
+            volume = np.asarray(nib.load(cohort.scan_path(row.subject_id, row.session_id)).dataobj)
+            means[int(row.label)].append(float(volume.mean()))
+        assert abs(np.mean(means[0]) - np.mean(means[1])) < 0.1
+
+
+class TestCohortSourceProtocol:
+    def test_it_satisfies_the_cohort_source_protocol(self, cohort: SyntheticCohort) -> None:
+        """The point of the generator: downstream code cannot tell it from OASIS-3."""
+        from oasis_dl.data.cohort import CohortSource
+
+        source: CohortSource = cohort
+        assert not source.sessions().empty
+
+    def test_sessions_carries_the_columns_downstream_code_reads(
+        self, cohort: SyntheticCohort
+    ) -> None:
+        required = {"subject_id", "session_id", "days_from_entry", "label"}
+        assert required <= set(cohort.sessions().columns)
+
+    def test_it_exposes_no_cognitive_score_column(self, cohort: SyntheticCohort) -> None:
+        """ADR-0002: a source that hands MMSE downstream invites the circularity."""
+        columns = {c.lower() for c in cohort.sessions().columns}
+        assert not {"mmse", "cdr"} & columns
