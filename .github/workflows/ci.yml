@@ -38,7 +38,7 @@ jobs:
         run: mypy
 
       - name: Test
-        run: pytest -m "not requires_data and not requires_gpu" --cov=oasis_dl --cov-report=term-missing
+        run: pytest -m "not requires_data and not requires_gpu and not slow" --cov=oasis_dl --cov-report=term-missing
 
   data-hygiene:
     name: no data or weights committed

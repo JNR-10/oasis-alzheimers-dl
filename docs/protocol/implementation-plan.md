@@ -19,6 +19,29 @@ The decision that saves the most is an ordering one: **sample subjects before
 preprocessing, not after.** Preprocessing is the dominant one-time CPU cost, and
 processing scans that will never be trained on spends all of it for nothing.
 
+### Measured 2026-11-22: a GPU is a prerequisite, not an optimisation
+
+Encoder footprint at the ADR-0010 input shape, measured on a 4-thread CPU (#5):
+
+| Backbone | Params | fwd 1x96³ | fwd+bwd 2x96³ | Peak RSS |
+|---|---|---|---|---|
+| resnet10 | 14.4M | 3.6s | 34.6s | 1.46 GB |
+| **resnet18** (configured) | 33.2M | 4.4s | **59.7s** | 1.50 GB |
+| resnet34 | 63.5M | 9.9s | 78.9s | 1.50 GB |
+
+That is roughly **30 seconds per volume** for a training step on CPU. One epoch over the
+planned cohort is on the order of a working day, and the plan calls for 9 runs. **CPU
+training at 96³ is not viable** — secure GPU access before week 4, or the arms do not
+run at all.
+
+Memory is not the binding constraint; time is. 1.5 GB peak means batch size is limited
+by throughput rather than by RAM, so a GPU buys the whole difference.
+
+Worth a decision, not taken here: **resnet18 carries 33M parameters for a cohort of 300
+subjects**, which is a heavy model for roughly 450 training sequences. `resnet10` is
+2.3x cheaper and a third the size. Changing it is a modelling decision for the team, and
+whichever is chosen must be identical across all arms or ablation 1 confounds.
+
 ## Three tracks
 
 Tickets are grouped so three people can work without queueing behind each other. Claim a

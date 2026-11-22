@@ -34,7 +34,10 @@ format:  ## Format with ruff
 typecheck:  ## Type-check with mypy
 	mypy
 
-test:  ## Run tests that need no cohort and no GPU
+test:  ## Run tests that need no cohort, no GPU, and are not slow
+	pytest -m "not requires_data and not requires_gpu and not slow"
+
+test-slow:  ## Run the slow tests too. 3D volumes at the production shape are minutes on CPU.
 	pytest -m "not requires_data and not requires_gpu"
 
 check: lint typecheck test  ## Run every gate CI runs

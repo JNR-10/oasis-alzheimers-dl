@@ -1,19 +1,38 @@
 """Torch datasets and batching over visit sequences.
 
-Unimplemented below the interface — needs real scans. The collate function is the
-interesting part and the one most likely to be got wrong, so its contract is written
-out here before anyone implements it.
+The collate function is the interesting part and the one most likely to be got wrong,
+so its contract is written out before the implementation.
+
+**Loading happens in the dataset, not in collate.** The shared-augmentation rule below
+is the reason: the same spatial transform must apply across one subject's visits, and
+that is only expressible where a subject's visits are together — inside
+``__getitem__``. Collate then sees tensors that are already correct, and its only job
+is padding. Consequently ``__getitem__`` yields a :class:`LoadedSequence` (the record
+plus its scans) rather than a bare :class:`~oasis_dl.types.VisitSequence`, which stays
+a pure record of what happened.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from typing import cast
 
+import nibabel as nib
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from oasis_dl.types import VisitSequence
+
+__all__ = [
+    "LoadedSequence",
+    "SequenceBatch",
+    "VisitSequenceDataset",
+    "collate_sequences",
+    "single_scan_collate",
+]
 
 
 @dataclass
@@ -45,7 +64,37 @@ class SequenceBatch:
     subject_ids: tuple[str, ...]
 
 
-class VisitSequenceDataset(Dataset[VisitSequence]):
+@dataclass(frozen=True)
+class LoadedSequence:
+    """One sequence with its scans read from disk and transformed.
+
+    Attributes:
+        sequence: The record. Its ``elapsed_days`` and ``label`` stay authoritative.
+        scans: ``(visits, 1, D, H, W)`` in the sequence's own order, so the target
+            visit is the last element here as it is everywhere else.
+        anatomy_targets: The target visit's structural quantities, or None when not
+            requested.
+    """
+
+    sequence: VisitSequence
+    scans: torch.Tensor
+    anatomy_targets: dict[str, float] | None = None
+
+
+def load_volume(path: Path) -> torch.Tensor:
+    """Read one preprocessed scan as ``(1, D, H, W)`` float32.
+
+    The channel axis is added here rather than at collate so that a transform sees the
+    same shape a model will.
+    """
+    # nibabel.load is typed as a union of every image class it can return; this
+    # pipeline only ever writes NIfTI, so narrow rather than widen the caller.
+    image = cast("nib.Nifti1Image", nib.load(path))
+    array = np.asarray(image.dataobj, dtype=np.float32)
+    return torch.from_numpy(array).unsqueeze(0)
+
+
+class VisitSequenceDataset(Dataset[LoadedSequence]):
     """Visit sequences, loading scans on access.
 
     Args:
@@ -58,6 +107,8 @@ class VisitSequenceDataset(Dataset[VisitSequence]):
             signal the temporal module reads (see docs/protocol/preprocessing.md).
         load_anatomy_targets: Training only. Test sequences need no targets, so a
             target extraction that failed on a test subject costs nothing.
+        seed: Base for the per-sample transform draw. Recorded so an augmented epoch
+            is reproducible (ADR-0008).
     """
 
     def __init__(
@@ -66,29 +117,100 @@ class VisitSequenceDataset(Dataset[VisitSequence]):
         *,
         transform: Callable[[torch.Tensor], torch.Tensor] | None = None,
         load_anatomy_targets: bool = False,
+        seed: int = 0,
     ) -> None:
         self.sequences = list(sequences)
         self.transform = transform
         self.load_anatomy_targets = load_anatomy_targets
+        self.seed = seed
 
     def __len__(self) -> int:
         return len(self.sequences)
 
-    def __getitem__(self, index: int) -> VisitSequence:
-        raise NotImplementedError("Blocked on preprocessed scans being available on disk.")
+    def __getitem__(self, index: int) -> LoadedSequence:
+        sequence = self.sequences[index]
+
+        scans = []
+        for visit in sequence.visits:
+            volume = load_volume(visit.scan_path)
+            if self.transform is not None:
+                # Re-seed per visit with one per-sample value, so every visit of this
+                # subject receives the identical draw. Drawing independently would
+                # manufacture anatomical change between visits — the exact signal the
+                # temporal module is being asked to detect.
+                torch.manual_seed(self.seed + index)
+                volume = self.transform(volume)
+            scans.append(volume)
+
+        targets = sequence.target_visit.anatomy_targets if self.load_anatomy_targets else None
+        return LoadedSequence(sequence=sequence, scans=torch.stack(scans), anatomy_targets=targets)
 
 
-def collate_sequences(batch: Sequence[VisitSequence]) -> SequenceBatch:
+def _stack_anatomy_targets(batch: Sequence[LoadedSequence]) -> torch.Tensor | None:
+    """Stack per-sequence anatomy targets in a stable key order, or return None.
+
+    Raises:
+        ValueError: If sequences disagree on which targets they carry. Silently
+            filling the gap would train the auxiliary head against a zero that is
+            never a true volume.
+    """
+    present = [item.anatomy_targets for item in batch]
+    if any(targets is None for targets in present):
+        return None
+
+    key_sets = {tuple(sorted(targets)) for targets in present if targets is not None}
+    if len(key_sets) > 1:
+        raise ValueError(
+            f"sequences in one batch carry different anatomy targets: {key_sets}. "
+            f"A missing target is omitted, never zero-filled — a zero volume is a "
+            f"plausible-looking number that is never true."
+        )
+
+    keys = sorted(next(iter(key_sets)))
+    return torch.tensor(
+        [[float(targets[k]) for k in keys] for targets in present if targets is not None],
+        dtype=torch.float32,
+    )
+
+
+def _empty_batch_guard(batch: Sequence[LoadedSequence]) -> None:
+    if not batch:
+        raise ValueError("cannot collate an empty batch")
+
+
+def collate_sequences(batch: Sequence[LoadedSequence]) -> SequenceBatch:
     """Pad a list of sequences into a :class:`SequenceBatch`.
 
     Right-padding would put the target visit at a different index for every sequence.
     **Left-pad instead**, so the target visit is always last and a model that reads the
     final position reads the right thing for every sample in the batch.
     """
-    raise NotImplementedError("Blocked on VisitSequenceDataset.__getitem__.")
+    _empty_batch_guard(batch)
+
+    max_visits = max(item.scans.shape[0] for item in batch)
+    reference = batch[0].scans
+    scans = torch.zeros((len(batch), max_visits, *reference.shape[1:]), dtype=reference.dtype)
+    elapsed = torch.zeros((len(batch), max_visits), dtype=torch.float32)
+    mask = torch.zeros((len(batch), max_visits), dtype=torch.bool)
+
+    for row, item in enumerate(batch):
+        n_visits = item.scans.shape[0]
+        start = max_visits - n_visits  # left pad: real visits occupy the tail
+        scans[row, start:] = item.scans
+        elapsed[row, start:] = torch.tensor(item.sequence.elapsed_days, dtype=torch.float32)
+        mask[row, start:] = True
+
+    return SequenceBatch(
+        scans=scans,
+        elapsed_days=elapsed,
+        mask=mask,
+        labels=torch.tensor([int(item.sequence.label) for item in batch]),
+        anatomy_targets=_stack_anatomy_targets(batch),
+        subject_ids=tuple(str(item.sequence.subject_id) for item in batch),
+    )
 
 
-def single_scan_collate(batch: Sequence[VisitSequence]) -> SequenceBatch:
+def single_scan_collate(batch: Sequence[LoadedSequence]) -> SequenceBatch:
     """Collate using only each sequence's target visit.
 
     The control arm of the first core ablation. Implemented as a collate function
@@ -96,4 +218,17 @@ def single_scan_collate(batch: Sequence[VisitSequence]) -> SequenceBatch:
     the same sequences, and the only difference between them is how much of each
     sequence the model is allowed to see.
     """
-    raise NotImplementedError("Blocked on collate_sequences.")
+    _empty_batch_guard(batch)
+
+    scans = torch.stack([item.scans[-1] for item in batch]).unsqueeze(1)
+    n = len(batch)
+    return SequenceBatch(
+        scans=scans,
+        # The target visit is its own anchor, so elapsed time is zero by construction
+        # rather than by convention.
+        elapsed_days=torch.zeros((n, 1), dtype=torch.float32),
+        mask=torch.ones((n, 1), dtype=torch.bool),
+        labels=torch.tensor([int(item.sequence.label) for item in batch]),
+        anatomy_targets=_stack_anatomy_targets(batch),
+        subject_ids=tuple(str(item.sequence.subject_id) for item in batch),
+    )
