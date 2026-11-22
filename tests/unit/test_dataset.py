@@ -14,6 +14,7 @@ import pytest
 import torch
 
 from oasis_dl.data.dataset import (
+    LoadedSequence,
     VisitSequenceDataset,
     collate_sequences,
     single_scan_collate,
@@ -91,6 +92,56 @@ class TestDatasetLoading:
         item = VisitSequenceDataset([sequence], transform=random_shift)[0]
         torch.testing.assert_close(item.scans[0], item.scans[1])
         torch.testing.assert_close(item.scans[1], item.scans[2])
+
+
+class TestAugmentationRng:
+    """The transform must not reach the process-global RNG, and must vary by epoch."""
+
+    def _dataset(self, tmp_path: Path) -> VisitSequenceDataset:
+        import nibabel as nib
+        import numpy as np
+
+        path = tmp_path / "v.nii.gz"
+        nib.Nifti1Image(np.zeros((6, 6, 6), dtype=np.float32), np.eye(4)).to_filename(path)
+        visit = Visit(
+            subject_id=SubjectId("S1"),
+            session_id=SessionId("S1_d0"),
+            days_from_entry=0,
+            scan_path=path,
+            label=Label.IMPAIRED,
+        )
+        sequence = VisitSequence(subject_id=SubjectId("S1"), visits=(visit,))
+        return VisitSequenceDataset([sequence], transform=lambda s: s + torch.randn(1).item())
+
+    def test_loading_does_not_disturb_the_global_rng(self, tmp_path: Path) -> None:
+        """Seeding torch from inside a dataset makes model init depend on fetch order.
+
+        Nothing would report that: training still runs, still converges, and is simply
+        no longer reproducible from its seed (ADR-0008).
+        """
+        dataset = self._dataset(tmp_path)
+        torch.manual_seed(1234)
+        expected = torch.randn(3)
+
+        torch.manual_seed(1234)
+        dataset[0]
+        after_loading = torch.randn(3)
+
+        torch.testing.assert_close(expected, after_loading)
+
+    def test_the_draw_changes_between_epochs(self, tmp_path: Path) -> None:
+        """Otherwise augmentation is fixed preprocessing wearing augmentation's name."""
+        dataset = self._dataset(tmp_path)
+        dataset.set_epoch(0)
+        first = dataset[0].scans.clone()
+        dataset.set_epoch(1)
+        second = dataset[0].scans
+        assert not torch.allclose(first, second)
+
+    def test_the_draw_is_reproducible_within_an_epoch(self, tmp_path: Path) -> None:
+        dataset = self._dataset(tmp_path)
+        dataset.set_epoch(4)
+        torch.testing.assert_close(dataset[0].scans, dataset[0].scans)
 
 
 class TestCollationPadding:
@@ -233,7 +284,32 @@ class TestAnatomyTargets:
         """Test sequences need no targets (ADR-0007), so this must stay cheap."""
         sequence = self._sequence_with_targets(tmp_path, {"hippocampus_left_mm3": 3.0})
         item = VisitSequenceDataset([sequence], load_anatomy_targets=False)[0]
-        assert collate_sequences([item]).anatomy_targets is None
+        batch = collate_sequences([item])
+        assert batch.anatomy_targets is None
+        assert batch.anatomy_mask is None
+
+    def test_one_target_less_sequence_does_not_disable_the_batch(self, tmp_path: Path) -> None:
+        """ADR-0009: not every session ships FreeSurfer output.
+
+        A training subject without targets is excluded from the auxiliary loss alone,
+        not from the batch. Dropping targets for the whole batch would make whether the
+        auxiliary objective runs at all depend on how the sampler filled the batch.
+        """
+        sequence = self._sequence_with_targets(tmp_path, {"a_mm3": 1.0})
+        with_targets = VisitSequenceDataset([sequence], load_anatomy_targets=True)[0]
+        without_targets = LoadedSequence(
+            sequence=with_targets.sequence,
+            scans=with_targets.scans,
+            anatomy_targets=None,
+        )
+
+        batch = collate_sequences([with_targets, without_targets])
+
+        assert batch.anatomy_mask is not None
+        assert batch.anatomy_mask.tolist() == [True, False]
+        assert batch.anatomy_targets is not None
+        assert batch.anatomy_targets[1].abs().sum() == 0, "masked row must be inert"
+        assert batch.labels.shape == (2,), "both sequences still train the classifier"
 
     def test_targets_are_stacked_in_a_stable_key_order(self, tmp_path: Path) -> None:
         sequence = self._sequence_with_targets(tmp_path, {"b_mm3": 2.0, "a_mm3": 1.0})
@@ -241,3 +317,4 @@ class TestAnatomyTargets:
         batch = collate_sequences([item])
         assert batch.anatomy_targets is not None
         torch.testing.assert_close(batch.anatomy_targets, torch.tensor([[1.0, 2.0]]))
+        assert batch.anatomy_mask is not None and batch.anatomy_mask.all()

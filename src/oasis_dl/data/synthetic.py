@@ -78,6 +78,22 @@ class SyntheticCohortSpec:
     noise_sigma: float = 0.1
     seed: int = 0
 
+    @classmethod
+    def production_shape(cls, **overrides: object) -> SyntheticCohortSpec:
+        """The ADR-0010 configuration: 2 mm, 96³, at most 3 visits per sequence.
+
+        For measuring throughput and memory on the data path before any real scan is
+        preprocessed. The defaults elsewhere are deliberately tiny so the suite stays
+        fast; this is the one that answers "will the real thing fit".
+        """
+        settings: dict[str, object] = {
+            "volume_shape": (96, 96, 96),
+            "voxel_size_mm": 2.0,
+            "max_visits": 3,
+        }
+        settings.update(overrides)
+        return cls(**settings)  # type: ignore[arg-type]
+
     def __post_init__(self) -> None:
         if self.min_visits < 1:
             raise ValueError("min_visits must be at least 1")
@@ -113,6 +129,7 @@ class SyntheticCohort:
         self.root = Path(root)
         self.spec = spec if spec is not None else SyntheticCohortSpec()
         self._sessions: pd.DataFrame | None = None
+        self._atrophy: list[float] = []
 
     # ---------------------------------------------------------------- generation
 
@@ -123,6 +140,7 @@ class SyntheticCohort:
 
         plans = self._plan_subjects(rng)
         rows: list[dict[str, object]] = []
+        atrophies: list[float] = []
         for plan in plans:
             for day in plan.days:
                 atrophy = plan.baseline_atrophy + plan.atrophy_per_year * (day / 365.0)
@@ -137,7 +155,8 @@ class SyntheticCohort:
                     if labeled
                     else None
                 )
-                path = self._write_volume(plan.subject_id, session_id, atrophy, rng)
+                path = self._write_scan(plan.subject_id, session_id, atrophy, rng)
+                atrophies.append(float(atrophy))
                 rows.append(
                     {
                         "subject_id": str(plan.subject_id),
@@ -145,11 +164,11 @@ class SyntheticCohort:
                         "days_from_entry": day,
                         "scan_path": str(path),
                         "label": None if label is None else int(label),
-                        "atrophy": float(atrophy),
                     }
                 )
 
         self._sessions = pd.DataFrame(rows)
+        self._atrophy = atrophies
         return self
 
     def _plan_subjects(self, rng: np.random.Generator) -> list[_SubjectPlan]:
@@ -180,14 +199,14 @@ class SyntheticCohort:
             plans.append(_SubjectPlan(subject_id, baseline, rate, days))
         return plans
 
-    def _write_volume(
+    def _write_scan(
         self,
         subject_id: SubjectId,
         session_id: SessionId,
         atrophy: float,
         rng: np.random.Generator,
     ) -> Path:
-        """Write one volume: noise, with a dimmed central region scaled by atrophy."""
+        """Write one scan: noise, with a dimmed central region scaled by atrophy."""
         shape = self.spec.volume_shape
         volume = rng.normal(1.0, self.spec.noise_sigma, size=shape)
 
@@ -212,10 +231,31 @@ class SyntheticCohort:
         Carries no cognitive-score column by construction. A source that hands MMSE
         downstream alongside the imaging columns is one careless feature list away from
         the circularity this project exists to avoid (ADR-0002).
+
+        The generative ``atrophy`` latent is deliberately **not** here either. The label
+        is a threshold of it, so a column holding it is this cohort's CDR: any model
+        reading the frame would score perfectly and the pipeline would look validated.
+        ADR-0002 covers "any feature that is a near-deterministic function" of the
+        label, and a synthetic leak teaches exactly the wrong lesson about a repo built
+        to catch real ones. Read it from :meth:`latent_atrophy` when debugging the
+        generator — never from the frame a model is handed.
         """
         if self._sessions is None:
             raise RuntimeError("call generate() before reading sessions()")
         return self._sessions.copy()
+
+    def latent_atrophy(self) -> pd.DataFrame:
+        """The generative latent behind each session's label. **Debugging only.**
+
+        Separate from :meth:`sessions` so that handing a model the cohort cannot
+        hand it the answer. Recomputed rather than stored, so there is no column to
+        leak back into the frame by accident.
+        """
+        if self._sessions is None:
+            raise RuntimeError("call generate() before reading latent_atrophy()")
+        frame = self._sessions[["subject_id", "session_id"]].copy()
+        frame["atrophy"] = self._atrophy
+        return frame
 
     def scan_path(self, subject_id: SubjectId, session_id: str) -> Path:
         """Where a session's volume was written.

@@ -107,26 +107,39 @@ class TestDeterminism:
 
 @pytest.mark.slow
 class TestMemoryFootprint:
-    def test_footprint_at_the_production_shape_is_recorded(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Measures what decides feasible batch size and sequence length (#5).
+    """#5: the footprint at the configured input shape, measured not typed.
 
-        Asserts only a loose ceiling. The useful output is the printed number, which
-        goes in the ticket — an assertion tuned to one machine would fail on another
-        and teach nobody anything.
-        """
-        encoder = VisitEncoder(embedding_dim=512)
+    This test *is* the record. Run `make test-all` to regenerate it; the numbers are
+    machine-specific, so they belong in a run you can repeat rather than typed into a
+    protocol document as though they were a property of the project.
+    """
+
+    @pytest.mark.parametrize("backbone", ["resnet10", "resnet18", "resnet34"])
+    def test_footprint_at_the_production_shape(
+        self, backbone: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import resource
+        import sys
+
+        def peak_rss_mb() -> float:
+            peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            return peak / (1024**2 if sys.platform == "darwin" else 1024)
+
+        encoder = VisitEncoder(backbone=backbone, embedding_dim=512)
         params = sum(p.numel() for p in encoder.parameters())
         param_mb = params * 4 / 1024**2
 
-        batch, visits = 4, 3
-        scans = torch.randn(batch * visits, 1, 96, 96, 96, requires_grad=True)
-        encoder(scans).sum().backward()
+        before = peak_rss_mb()
+        encoder(torch.randn(2, 1, 96, 96, 96)).sum().backward()
+        after = peak_rss_mb()
 
-        print(
-            f"\nVisitEncoder(resnet18, 512) at 96^3: "
-            f"{params:,} params ({param_mb:.1f} MB fp32); "
-            f"forward+backward over batch={batch} x visits={visits} completed"
-        )
-        assert param_mb < 500, "backbone is implausibly large for a 3D ResNet-18"
+        with capsys.disabled():
+            print(
+                f"\n  {backbone:11s} {params:>11,} params  {param_mb:>6.1f} MB fp32  "
+                f"peak RSS {after:>6.0f} MB (+{max(after - before, 0):.0f})"
+            )
+
+        # A loose ceiling only. An assertion tuned to one machine fails on the next
+        # and teaches nobody anything; the printed line is the deliverable.
+        assert param_mb < 500, "implausibly large for a 3D ResNet"
+        assert after < 16_000, "footprint would not fit a typical training GPU"

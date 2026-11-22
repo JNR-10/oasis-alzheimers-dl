@@ -19,30 +19,24 @@ The decision that saves the most is an ordering one: **sample subjects before
 preprocessing, not after.** Preprocessing is the dominant one-time CPU cost, and
 processing scans that will never be trained on spends all of it for nothing.
 
-### Measured 2026-11-22: encoder footprint at the ADR-0010 input shape
+### Encoder capacity, and where the footprint lives
 
-Required by #5, because this is what decides feasible batch size and sequence length.
+The visit encoder's parameter counts follow from the architecture, so they can be
+stated here: resnet10 is 14.4M, **resnet18 (configured) is 33.2M**, resnet34 is 63.5M.
 
-| Backbone | Params | Size fp32 | Peak RSS, fwd+bwd 2x96³ | Cost vs resnet18 |
-|---|---|---|---|---|
-| resnet10 | 14.4M | 54.8 MB | 1.46 GB | 0.58x |
-| **resnet18** (configured) | 33.2M | 126.5 MB | 1.50 GB | 1.00x |
-| resnet34 | 63.5M | 242.1 MB | 1.50 GB | 1.32x |
+The memory and throughput footprint at the 96³ input shape is **not** reproduced here.
+It is machine-specific, and this repository generates result tables from recorded runs
+rather than typing them (see `AGENTS.md`). The measurement lives in
+`tests/unit/test_encoder.py::TestMemoryFootprint` and is regenerated with `make
+test-all`; it is excluded from CI because 3D volumes at the production shape take
+minutes per backbone.
 
-Absolute timings are omitted on purpose: they were taken on a laptop CPU that nobody
-will train on, so they say more about that machine than about the model. The columns
-above are the ones that transfer — parameter counts, model size, and the relative cost
-between backbones.
-
-**Memory is not the binding constraint.** Peak RSS stays near 1.5 GB across all three
-at the production shape, so batch size will be limited by throughput, not by RAM. Any
-modern GPU holds this comfortably.
-
-Worth a decision, not taken here: **resnet18 carries 33M parameters for a cohort of 300
-subjects**, roughly 450 training sequences. That is a heavy model for the data, and
-`resnet10` is 42% cheaper at a third the size. This is a modelling judgement for the
-team rather than a config tweak — and whichever is chosen must be identical across every
-arm, or ablation 1 confounds architecture with capacity.
+Worth a decision, not taken here: **33.2M parameters is a heavy model for 300 subjects**
+— roughly 450 training sequences once the cohort is built (#14 reports the real count;
+`docs/data/cohort-definition.md` holds `_tbd_` until then). `resnet10` is under half the
+size. This is a modelling judgement for the team rather than a config tweak, and
+whichever is chosen must be identical across every arm, or ablation 1 confounds
+architecture with capacity.
 
 ## Three tracks
 

@@ -76,9 +76,9 @@ class VisitSequence:
     rather than masked later — a sequence that physically cannot contain the future
     cannot leak it.
 
-    Invariants to enforce in ``__post_init__`` when this is implemented: at least one
-    visit, every visit from ``subject_id``, visits in chronological order, and the last
-    visit labeled. Each one, violated, is a silent bug rather than a crash.
+    ``__post_init__`` enforces four invariants: at least one visit, every visit from
+    ``subject_id``, visits in chronological order, and the last visit labeled. Each
+    one, unchecked, is a silent bug rather than a crash.
 
     Attributes:
         subject_id: The person. All visits share it.

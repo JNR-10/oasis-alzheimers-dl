@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import NamedTuple, cast
 
 import nibabel as nib
 import numpy as np
@@ -52,6 +52,13 @@ class SequenceBatch:
             fabricates history.
         labels: ``(batch,)``. One label per sequence, from the target visit.
         anatomy_targets: ``(batch, n_targets)`` or None. Training only (ADR-0007).
+            Rows for sequences without targets are zero and are excluded by
+            ``anatomy_mask``, never by trusting their value.
+        anatomy_mask: ``(batch,)`` boolean, or None when no sequence carries
+            targets. False marks a sequence the auxiliary loss must skip. Not
+            every session ships FreeSurfer output (ADR-0009), so a training
+            subject without targets still contributes classification loss and is
+            excluded from the auxiliary head alone.
         subject_ids: One per sequence, carried through so that metrics can be
             aggregated per subject as well as per visit.
     """
@@ -61,6 +68,7 @@ class SequenceBatch:
     mask: torch.Tensor
     labels: torch.Tensor
     anatomy_targets: torch.Tensor | None
+    anatomy_mask: torch.Tensor | None
     subject_ids: tuple[str, ...]
 
 
@@ -81,7 +89,7 @@ class LoadedSequence:
     anatomy_targets: dict[str, float] | None = None
 
 
-def load_volume(path: Path) -> torch.Tensor:
+def load_scan(path: Path) -> torch.Tensor:
     """Read one preprocessed scan as ``(1, D, H, W)`` float32.
 
     The channel axis is added here rather than at collate so that a transform sees the
@@ -108,7 +116,9 @@ class VisitSequenceDataset(Dataset[LoadedSequence]):
         load_anatomy_targets: Training only. Test sequences need no targets, so a
             target extraction that failed on a test subject costs nothing.
         seed: Base for the per-sample transform draw. Recorded so an augmented epoch
-            is reproducible (ADR-0008).
+            is reproducible (ADR-0008). Call :meth:`set_epoch` each epoch, or every
+            epoch draws the identical augmentation and it degenerates into fixed
+            preprocessing.
     """
 
     def __init__(
@@ -123,6 +133,15 @@ class VisitSequenceDataset(Dataset[LoadedSequence]):
         self.transform = transform
         self.load_anatomy_targets = load_anatomy_targets
         self.seed = seed
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        """Advance the augmentation draw.
+
+        Without this the per-sample seed is fixed, so a sample receives the same
+        augmentation at every epoch and the augmentation stops being augmentation.
+        """
+        self.epoch = epoch
 
     def __len__(self) -> int:
         return len(self.sequences)
@@ -130,52 +149,108 @@ class VisitSequenceDataset(Dataset[LoadedSequence]):
     def __getitem__(self, index: int) -> LoadedSequence:
         sequence = self.sequences[index]
 
+        # One draw per sample, reused for every visit of that subject. Drawing
+        # independently per visit would manufacture anatomical change between visits —
+        # the exact signal the temporal module is asked to detect.
+        sample_seed = self.seed + self.epoch * 1_000_003 + index
+
         scans = []
         for visit in sequence.visits:
-            volume = load_volume(visit.scan_path)
+            scan = load_scan(visit.scan_path)
             if self.transform is not None:
-                # Re-seed per visit with one per-sample value, so every visit of this
-                # subject receives the identical draw. Drawing independently would
-                # manufacture anatomical change between visits — the exact signal the
-                # temporal module is being asked to detect.
-                torch.manual_seed(self.seed + index)
-                volume = self.transform(volume)
-            scans.append(volume)
+                # Save and restore around the draw. Seeding torch globally from inside
+                # a dataset makes model init, dropout and shuffling depend on the order
+                # batches happen to be fetched in, which breaks ADR-0008 reproducibility
+                # in a way nothing would report.
+                state = torch.get_rng_state()
+                try:
+                    torch.manual_seed(sample_seed)
+                    scan = self.transform(scan)
+                finally:
+                    torch.set_rng_state(state)
+            scans.append(scan)
 
         targets = sequence.target_visit.anatomy_targets if self.load_anatomy_targets else None
         return LoadedSequence(sequence=sequence, scans=torch.stack(scans), anatomy_targets=targets)
 
 
-def _stack_anatomy_targets(batch: Sequence[LoadedSequence]) -> torch.Tensor | None:
-    """Stack per-sequence anatomy targets in a stable key order, or return None.
+def _empty_batch_guard(batch: Sequence[LoadedSequence]) -> None:
+    """Refuse an empty batch rather than return a zero-row one.
+
+    A zero-row SequenceBatch flows through training without erroring and contributes
+    nothing, which looks like a quiet epoch rather than a bug.
+    """
+    if not batch:
+        raise ValueError("cannot collate an empty batch")
+
+
+def _stack_anatomy_targets(
+    batch: Sequence[LoadedSequence],
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """Stack anatomy targets in a stable key order, with a per-sequence validity mask.
+
+    Masked per sequence rather than dropped per batch. Not every session ships
+    FreeSurfer output (ADR-0009), so a batch containing one target-less training
+    subject must still train the auxiliary head on the rest — otherwise whether the
+    auxiliary objective runs at all depends on how the sampler happened to fill the
+    batch, which is a silent, non-reproducible change to the loss.
+
+    Returns:
+        ``(values, mask)``, or ``(None, None)`` when no sequence carries targets.
+        Rows without targets are zero **and** masked False; the mask is the contract,
+        never the zero.
 
     Raises:
-        ValueError: If sequences disagree on which targets they carry. Silently
-            filling the gap would train the auxiliary head against a zero that is
-            never a true volume.
+        ValueError: If sequences disagree on *which* targets they carry. A missing
+            target is omitted, never zero-filled — a zero volume is a
+            plausible-looking number that is never true.
     """
     present = [item.anatomy_targets for item in batch]
-    if any(targets is None for targets in present):
-        return None
+    if all(targets is None for targets in present):
+        return None, None
 
     key_sets = {tuple(sorted(targets)) for targets in present if targets is not None}
     if len(key_sets) > 1:
         raise ValueError(
             f"sequences in one batch carry different anatomy targets: {key_sets}. "
-            f"A missing target is omitted, never zero-filled — a zero volume is a "
-            f"plausible-looking number that is never true."
+            f"The auxiliary head predicts a fixed vector, so a batch cannot hold two "
+            f"different target sets."
         )
 
     keys = sorted(next(iter(key_sets)))
-    return torch.tensor(
-        [[float(targets[k]) for k in keys] for targets in present if targets is not None],
-        dtype=torch.float32,
+    values = torch.zeros((len(batch), len(keys)), dtype=torch.float32)
+    mask = torch.zeros(len(batch), dtype=torch.bool)
+    for row, targets in enumerate(present):
+        if targets is None:
+            continue
+        values[row] = torch.tensor([float(targets[k]) for k in keys])
+        mask[row] = True
+    return values, mask
+
+
+class _BatchIdentity(NamedTuple):
+    """The fields a batch carries over unchanged from its sequences."""
+
+    labels: torch.Tensor
+    anatomy_targets: torch.Tensor | None
+    anatomy_mask: torch.Tensor | None
+    subject_ids: tuple[str, ...]
+
+
+def _batch_identity(batch: Sequence[LoadedSequence]) -> _BatchIdentity:
+    """The fields both collate functions carry unchanged from the sequences.
+
+    Shared so that the longitudinal and single-scan arms cannot drift apart in how
+    they label or identify a batch. Ablation 1 varies architecture alone, and that
+    guarantee is easier to keep when there is one place the labels come from.
+    """
+    targets, mask = _stack_anatomy_targets(batch)
+    return _BatchIdentity(
+        labels=torch.tensor([int(item.sequence.label) for item in batch]),
+        anatomy_targets=targets,
+        anatomy_mask=mask,
+        subject_ids=tuple(str(item.sequence.subject_id) for item in batch),
     )
-
-
-def _empty_batch_guard(batch: Sequence[LoadedSequence]) -> None:
-    if not batch:
-        raise ValueError("cannot collate an empty batch")
 
 
 def collate_sequences(batch: Sequence[LoadedSequence]) -> SequenceBatch:
@@ -197,16 +272,22 @@ def collate_sequences(batch: Sequence[LoadedSequence]) -> SequenceBatch:
         n_visits = item.scans.shape[0]
         start = max_visits - n_visits  # left pad: real visits occupy the tail
         scans[row, start:] = item.scans
+        # Padded positions keep elapsed=0, which is also what the target visit
+        # reads. The two are only distinguishable through `mask`, so a consumer
+        # that ignores the mask sees a batch of target visits. The temporal module
+        # must take the mask, not infer history from this tensor.
         elapsed[row, start:] = torch.tensor(item.sequence.elapsed_days, dtype=torch.float32)
         mask[row, start:] = True
 
+    identity = _batch_identity(batch)
     return SequenceBatch(
         scans=scans,
         elapsed_days=elapsed,
         mask=mask,
-        labels=torch.tensor([int(item.sequence.label) for item in batch]),
-        anatomy_targets=_stack_anatomy_targets(batch),
-        subject_ids=tuple(str(item.sequence.subject_id) for item in batch),
+        labels=identity.labels,
+        anatomy_targets=identity.anatomy_targets,
+        anatomy_mask=identity.anatomy_mask,
+        subject_ids=identity.subject_ids,
     )
 
 
@@ -222,13 +303,15 @@ def single_scan_collate(batch: Sequence[LoadedSequence]) -> SequenceBatch:
 
     scans = torch.stack([item.scans[-1] for item in batch]).unsqueeze(1)
     n = len(batch)
+    identity = _batch_identity(batch)
     return SequenceBatch(
         scans=scans,
         # The target visit is its own anchor, so elapsed time is zero by construction
         # rather than by convention.
         elapsed_days=torch.zeros((n, 1), dtype=torch.float32),
         mask=torch.ones((n, 1), dtype=torch.bool),
-        labels=torch.tensor([int(item.sequence.label) for item in batch]),
-        anatomy_targets=_stack_anatomy_targets(batch),
-        subject_ids=tuple(str(item.sequence.subject_id) for item in batch),
+        labels=identity.labels,
+        anatomy_targets=identity.anatomy_targets,
+        anatomy_mask=identity.anatomy_mask,
+        subject_ids=identity.subject_ids,
     )

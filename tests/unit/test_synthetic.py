@@ -162,6 +162,30 @@ class TestLearnableSignal:
         assert abs(np.mean(means[0]) - np.mean(means[1])) < 0.1
 
 
+class TestProductionShapePreset:
+    def test_a_named_preset_matches_the_adr_0010_configuration(self) -> None:
+        """#3 asks for the real configuration on request; naming it is what makes it
+        requestable rather than something each caller re-derives."""
+        spec = SyntheticCohortSpec.production_shape(n_subjects=2, seed=1)
+        assert spec.volume_shape == (96, 96, 96)
+        assert spec.voxel_size_mm == 2.0
+        assert spec.max_visits == 3
+
+    @pytest.mark.slow
+    def test_the_preset_actually_generates(self, tmp_path: Path) -> None:
+        """A preset nobody runs is a comment. 96^3 volumes are slow, hence the mark."""
+        spec = SyntheticCohortSpec.production_shape(n_subjects=2, seed=1)
+        cohort = SyntheticCohort(tmp_path, spec).generate()
+        import nibabel as nib
+
+        row = next(cohort.sessions().itertuples())
+        assert nib.load(cohort.scan_path(row.subject_id, row.session_id)).shape == (
+            96,
+            96,
+            96,
+        )
+
+
 class TestCohortSourceProtocol:
     def test_it_satisfies_the_cohort_source_protocol(self, cohort: SyntheticCohort) -> None:
         """The point of the generator: downstream code cannot tell it from OASIS-3."""
@@ -180,3 +204,38 @@ class TestCohortSourceProtocol:
         """ADR-0002: a source that hands MMSE downstream invites the circularity."""
         columns = {c.lower() for c in cohort.sessions().columns}
         assert not {"mmse", "cdr"} & columns
+
+    def test_no_column_in_the_frame_predicts_the_label(self, cohort: SyntheticCohort) -> None:
+        """The property check, where the one above is only a spelling check.
+
+        A name-based test catches leaks someone already thought to name. This one
+        catches the generator handing out its own ``atrophy`` latent — the quantity
+        the label is a threshold of, i.e. this cohort's CDR — which the mmse/cdr
+        check sails straight past.
+        """
+        import pandas as pd
+        from sklearn.metrics import roc_auc_score
+
+        labeled = cohort.sessions()[lambda f: f["label"].notna()]
+        identifiers = {"label", "subject_id", "session_id", "scan_path"}
+
+        for column in labeled.columns:
+            if column in identifiers:
+                continue
+            values = pd.to_numeric(labeled[column], errors="coerce")
+            if values.isna().all():
+                continue
+            auc = roc_auc_score(labeled["label"], values)
+            assert 0.25 < auc < 0.75, (
+                f"column {column!r} separates the label at AUC {auc:.2f}. Nothing a "
+                f"model can read may be a near-deterministic function of the label "
+                f"(ADR-0002)."
+            )
+
+    def test_the_latent_stays_reachable_for_debugging_the_generator(
+        self, cohort: SyntheticCohort
+    ) -> None:
+        """Off the frame a model is handed, not off the object."""
+        latent = cohort.latent_atrophy()
+        assert "atrophy" in latent.columns
+        assert len(latent) == len(cohort.sessions())
