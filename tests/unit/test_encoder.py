@@ -112,6 +112,11 @@ class TestMemoryFootprint:
     This test *is* the record. Run `make test-all` to regenerate it; the numbers are
     machine-specific, so they belong in a run you can repeat rather than typed into a
     protocol document as though they were a property of the project.
+
+    Read the RSS figures as a **process** high-water mark, not a per-backbone cost.
+    ``ru_maxrss`` never falls, and these parametrisations share one process, so the
+    first to run absorbs the allocator pool and the rest look free. To cost one
+    backbone against another, run a single parametrisation in its own process.
     """
 
     @pytest.mark.parametrize("backbone", ["resnet10", "resnet18", "resnet34"])
@@ -129,17 +134,16 @@ class TestMemoryFootprint:
         params = sum(p.numel() for p in encoder.parameters())
         param_mb = params * 4 / 1024**2
 
-        before = peak_rss_mb()
         encoder(torch.randn(2, 1, 96, 96, 96)).sum().backward()
-        after = peak_rss_mb()
+        peak = peak_rss_mb()
 
         with capsys.disabled():
             print(
                 f"\n  {backbone:11s} {params:>11,} params  {param_mb:>6.1f} MB fp32  "
-                f"peak RSS {after:>6.0f} MB (+{max(after - before, 0):.0f})"
+                f"process peak RSS {peak:>6.0f} MB"
             )
 
         # A loose ceiling only. An assertion tuned to one machine fails on the next
         # and teaches nobody anything; the printed line is the deliverable.
         assert param_mb < 500, "implausibly large for a 3D ResNet"
-        assert after < 16_000, "footprint would not fit a typical training GPU"
+        assert peak < 16_000, "footprint would not fit a typical training GPU"
