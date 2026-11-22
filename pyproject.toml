@@ -117,6 +117,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+# Puts the repo root on sys.path so tests can `from tests.helpers import ...`.
+# Without it the shared record builders are only importable from tests/ itself.
+pythonpath = ["."]
 markers = [
   "slow: test that takes more than a few seconds",
   "requires_data: test that needs a local OASIS cohort and is skipped in CI",

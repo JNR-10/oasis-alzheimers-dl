@@ -11,9 +11,9 @@ import torch
 from torch import nn
 
 from oasis_dl.data.dataset import SequenceBatch
+from oasis_dl.models.encoder import VisitEncoder
 from oasis_dl.models.heads import AnatomyHead, ClassificationHead
 from oasis_dl.models.temporal import TemporalAttention
-from oasis_dl.models.encoder import VisitEncoder
 
 
 class ModelOutput(nn.Module):
