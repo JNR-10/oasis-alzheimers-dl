@@ -19,28 +19,30 @@ The decision that saves the most is an ordering one: **sample subjects before
 preprocessing, not after.** Preprocessing is the dominant one-time CPU cost, and
 processing scans that will never be trained on spends all of it for nothing.
 
-### Measured 2026-11-22: a GPU is a prerequisite, not an optimisation
+### Measured 2026-11-22: encoder footprint at the ADR-0010 input shape
 
-Encoder footprint at the ADR-0010 input shape, measured on a 4-thread CPU (#5):
+Required by #5, because this is what decides feasible batch size and sequence length.
 
-| Backbone | Params | fwd 1x96³ | fwd+bwd 2x96³ | Peak RSS |
+| Backbone | Params | Size fp32 | Peak RSS, fwd+bwd 2x96³ | Cost vs resnet18 |
 |---|---|---|---|---|
-| resnet10 | 14.4M | 3.6s | 34.6s | 1.46 GB |
-| **resnet18** (configured) | 33.2M | 4.4s | **59.7s** | 1.50 GB |
-| resnet34 | 63.5M | 9.9s | 78.9s | 1.50 GB |
+| resnet10 | 14.4M | 54.8 MB | 1.46 GB | 0.58x |
+| **resnet18** (configured) | 33.2M | 126.5 MB | 1.50 GB | 1.00x |
+| resnet34 | 63.5M | 242.1 MB | 1.50 GB | 1.32x |
 
-That is roughly **30 seconds per volume** for a training step on CPU. One epoch over the
-planned cohort is on the order of a working day, and the plan calls for 9 runs. **CPU
-training at 96³ is not viable** — secure GPU access before week 4, or the arms do not
-run at all.
+Absolute timings are omitted on purpose: they were taken on a laptop CPU that nobody
+will train on, so they say more about that machine than about the model. The columns
+above are the ones that transfer — parameter counts, model size, and the relative cost
+between backbones.
 
-Memory is not the binding constraint; time is. 1.5 GB peak means batch size is limited
-by throughput rather than by RAM, so a GPU buys the whole difference.
+**Memory is not the binding constraint.** Peak RSS stays near 1.5 GB across all three
+at the production shape, so batch size will be limited by throughput, not by RAM. Any
+modern GPU holds this comfortably.
 
 Worth a decision, not taken here: **resnet18 carries 33M parameters for a cohort of 300
-subjects**, which is a heavy model for roughly 450 training sequences. `resnet10` is
-2.3x cheaper and a third the size. Changing it is a modelling decision for the team, and
-whichever is chosen must be identical across all arms or ablation 1 confounds.
+subjects**, roughly 450 training sequences. That is a heavy model for the data, and
+`resnet10` is 42% cheaper at a third the size. This is a modelling judgement for the
+team rather than a config tweak — and whichever is chosen must be identical across every
+arm, or ablation 1 confounds architecture with capacity.
 
 ## Three tracks
 
