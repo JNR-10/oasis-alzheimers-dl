@@ -11,6 +11,9 @@ must produce identical embeddings.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 import torch
 
@@ -119,7 +122,7 @@ class TestMemoryFootprint:
     backbone against another, run a single parametrisation in its own process.
     """
 
-    @pytest.mark.parametrize("backbone", ["resnet10", "resnet18", "resnet34"])
+    @pytest.mark.parametrize("backbone", ["resnet10", "resnet18", "vit_base_16"])
     def test_footprint_at_the_production_shape(
         self, backbone: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -130,7 +133,7 @@ class TestMemoryFootprint:
             peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
             return peak / (1024**2 if sys.platform == "darwin" else 1024)
 
-        encoder = VisitEncoder(backbone=backbone, embedding_dim=512)
+        encoder = VisitEncoder(backbone=backbone, embedding_dim=512, volume_shape=(96, 96, 96))
         params = sum(p.numel() for p in encoder.parameters())
         param_mb = params * 4 / 1024**2
 
@@ -145,5 +148,182 @@ class TestMemoryFootprint:
 
         # A loose ceiling only. An assertion tuned to one machine fails on the next
         # and teaches nobody anything; the printed line is the deliverable.
-        assert param_mb < 500, "implausibly large for a 3D ResNet"
+        assert param_mb < 1000, "implausibly large for a 3D encoder"
         assert peak < 16_000, "footprint would not fit a typical training GPU"
+
+
+TINY = (16, 16, 16)
+"""A shape every backbone here accepts, and small enough to run on a laptop."""
+
+
+def _tiny_vit(**kwargs: object) -> VisitEncoder:
+    """A ViT at 1/47th of ViT-B, exercising the identical code path.
+
+    Production is ``vit_base_16`` at 96^3 (ADR-0011) and takes well over a second per
+    forward pass on CPU. Tests that used it would stop being run.
+    """
+    return VisitEncoder(backbone="vit_tiny_8", volume_shape=TINY, **kwargs)  # type: ignore[arg-type]
+
+
+class TestVisionTransformerBackbone:
+    def test_emits_the_configured_width(self) -> None:
+        encoder = _tiny_vit(embedding_dim=64).eval()
+        with torch.no_grad():
+            out = encoder(torch.randn(2, 1, *TINY))
+        assert out.shape == (2, 64)
+
+    def test_keeps_the_shared_weight_property(self) -> None:
+        """ADR-0005 again, for a backbone where it is not obvious.
+
+        A ViT adds positional embeddings per *patch*. Pooling over tokens is what keeps
+        the batch position irrelevant, so this is the test that pooling choice earns.
+        """
+        encoder = _tiny_vit(embedding_dim=32).eval()
+        volume = torch.randn(1, 1, *TINY)
+        batch = torch.cat([volume, torch.randn(1, 1, *TINY), volume], dim=0)
+        with torch.no_grad():
+            out = encoder(batch)
+        torch.testing.assert_close(out[0], out[2])
+
+    def test_a_shape_it_was_not_built_for_names_the_cause(self) -> None:
+        """Positional embeddings are sized at construction; resizing input is not a fix."""
+        encoder = _tiny_vit(embedding_dim=32).eval()
+        with pytest.raises(ValueError, match="was built for volume_shape"):
+            encoder(torch.randn(1, 1, 32, 32, 32))
+
+    def test_a_volume_shape_the_patches_do_not_tile_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="not divisible by the patch size"):
+            VisitEncoder(backbone="vit_tiny_8", volume_shape=(20, 20, 20))
+
+    def test_gradients_reach_the_transformer(self) -> None:
+        encoder = _tiny_vit(embedding_dim=32)
+        encoder(torch.randn(2, 1, *TINY)).sum().backward()
+        grads = [p.grad for p in encoder.parameters() if p.grad is not None]
+        assert grads and any(g.abs().sum() > 0 for g in grads)
+
+
+class TestPretrainedCheckpoints:
+    """Loading third-party weights, and the one failure mode that is silent.
+
+    ``strict=False`` is unavoidable across third-party checkpoints, and it reports a
+    total key mismatch the same way it reports a harmless one: by returning. A run that
+    believed itself pretrained and was not would be indistinguishable from a real result.
+    """
+
+    def test_random_initialization_is_the_default(self) -> None:
+        assert VisitEncoder(backbone="resnet10").pretrained is None
+
+    def test_an_unknown_checkpoint_names_the_known_ones(self) -> None:
+        with pytest.raises(ValueError, match="brainiac_vit_b"):
+            VisitEncoder(backbone="vit_base_16", pretrained="not-a-checkpoint")
+
+    def test_a_checkpoint_for_another_backbone_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="holds vit_base_16 weights"):
+            VisitEncoder(backbone="resnet18", pretrained="brainiac_vit_b")
+
+    def test_naming_a_checkpoint_without_a_path_says_where_to_get_it(self) -> None:
+        """Weights never enter git and nothing here downloads them."""
+        with pytest.raises(ValueError, match=re.escape("github.com/AIM-KannLab/BrainIAC")):
+            VisitEncoder(backbone="vit_base_16", pretrained="brainiac_vit_b")
+
+    def test_provenance_records_the_oasis_overlap(self) -> None:
+        """The fact a reviewer will ask about, kept beside the weights that carry it."""
+        spec = VisitEncoder.checkpoint_provenance("brainiac_vit_b")
+        assert spec.overlaps_oasis is True
+        assert any("OASIS" in corpus for corpus in spec.pretraining_corpus)
+
+    def test_loading_a_contaminated_checkpoint_warns_and_names_oasis(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checkpoint = _write_tiny_checkpoint(tmp_path, monkeypatch, overlaps_oasis=True)
+        with pytest.warns(UserWarning, match="OASIS-3"):
+            VisitEncoder(
+                backbone="vit_tiny_8",
+                volume_shape=TINY,
+                pretrained="test_tiny",
+                checkpoint_path=checkpoint,
+            )
+
+    def test_weights_actually_arrive_in_the_backbone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checkpoint = _write_tiny_checkpoint(tmp_path, monkeypatch, overlaps_oasis=False)
+        loaded = VisitEncoder(
+            backbone="vit_tiny_8",
+            volume_shape=TINY,
+            pretrained="test_tiny",
+            checkpoint_path=checkpoint,
+        )
+        saved = torch.load(checkpoint, map_location="cpu")
+        name, expected = next(iter(saved.items()))
+        torch.testing.assert_close(dict(loaded.body.state_dict())[name], expected)
+
+    def test_a_checkpoint_matching_nothing_is_an_error_not_a_silent_random_init(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The failure this whole class exists for."""
+        _write_tiny_checkpoint(tmp_path, monkeypatch, overlaps_oasis=False)
+        wrong = tmp_path / "wrong.pt"
+        torch.save({"nothing.like.a.vit.key": torch.zeros(3)}, wrong)
+        with pytest.raises(ValueError, match="matched no parameter"):
+            VisitEncoder(
+                backbone="vit_tiny_8",
+                volume_shape=TINY,
+                pretrained="test_tiny",
+                checkpoint_path=wrong,
+            )
+
+    def test_a_missing_checkpoint_file_is_reported_as_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write_tiny_checkpoint(tmp_path, monkeypatch, overlaps_oasis=False)
+        with pytest.raises(FileNotFoundError):
+            VisitEncoder(
+                backbone="vit_tiny_8",
+                volume_shape=TINY,
+                pretrained="test_tiny",
+                checkpoint_path=tmp_path / "absent.pt",
+            )
+
+
+def _write_tiny_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, overlaps_oasis: bool
+) -> Path:
+    """Register a test-only checkpoint and save weights that genuinely fit it.
+
+    Registered through the same registry production uses, so the test exercises the
+    real lookup. Monkeypatched, so it disappears with the test rather than becoming a
+    fake entry a config could select.
+    """
+    from oasis_dl.models import encoder as encoder_module
+
+    monkeypatch.setitem(
+        encoder_module._CHECKPOINTS,
+        "test_tiny",
+        encoder_module.PretrainedCheckpoint(
+            backbone="vit_tiny_8",
+            source="test fixture",
+            license_terms="n/a",
+            pretraining_corpus=("OASIS-3",) if overlaps_oasis else ("IXI",),
+            overlaps_oasis=overlaps_oasis,
+        ),
+    )
+    donor = VisitEncoder(backbone="vit_tiny_8", volume_shape=TINY)
+    path = tmp_path / "tiny.pt"
+    torch.save(donor.body.state_dict(), path)
+    return path
+
+
+@pytest.mark.slow
+def test_the_production_encoder_runs_at_its_configured_shape() -> None:
+    """ADR-0011's encoder at ADR-0010's input shape, which is what every arm will use.
+
+    Slow-marked rather than skipped: `vit_base_16` at 96^3 is over a second per forward
+    pass on CPU, so it would stop `make test` being run at all. It still has to work,
+    so `make test-all` and CI's nightly path keep it honest.
+    """
+    encoder = VisitEncoder(backbone="vit_base_16", embedding_dim=512, volume_shape=(96, 96, 96))
+    encoder.eval()
+    with torch.no_grad():
+        out = encoder(torch.randn(1, 1, 96, 96, 96))
+    assert out.shape == (1, 512)

@@ -8,7 +8,8 @@
 
 defaults:
   - data: oasis3_longitudinal
-  - model: resnet3d
+  - encoder: vit_base_brainiac
+  - model: shared_encoder
   - training: default
   - evaluation: default
   - experiment: baseline_single_scan

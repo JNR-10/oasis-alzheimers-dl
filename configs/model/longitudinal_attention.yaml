@@ -1,13 +1,16 @@
-# Encoder plus temporal module. Identical to resnet3d except for the temporal block —
-# the one variable of ablation 1.
+# Encoder plus temporal module. Identical to shared_encoder except for the temporal
+# block — the one variable of ablation 1.
 
 defaults:
-  - resnet3d
+  - shared_encoder
 
 name: longitudinal_attention
 
 temporal:
-  embedding_dim: 512
+  # Follows the encoder rather than restating its width. A temporal module built for a
+  # width the encoder does not emit is a shape error at the first batch; worse, one
+  # built for a width it *does* emit by coincidence silently survives an encoder swap.
+  embedding_dim: ${encoder.embedding_dim}
   n_heads: 4
   # Kept small: the cohort is small and Transformer components overfit it readily
   # (docs/audits/).

@@ -1,0 +1,15 @@
+# A 2.5M-parameter ViT for smoke runs on a machine without a GPU.
+#
+# Same code path as vit_base_brainiac, roughly 1/47th the size. For proving a training
+# loop runs end to end before it is queued on real hardware. No result in the report
+# comes from this encoder, and `name` is carried into every run record so one cannot be
+# mistaken for a production run.
+
+name: vit_tiny_smoke
+
+backbone: vit_tiny_8
+embedding_dim: 192
+in_channels: 1
+volume_shape: ${data.volume_shape}
+pretrained: null
+checkpoint_path: null

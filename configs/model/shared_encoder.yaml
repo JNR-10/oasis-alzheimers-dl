@@ -1,0 +1,17 @@
+# The shared visit encoder (ADR-0005), with no temporal module. Used by every
+# single-scan arm.
+#
+# The encoder itself is *not* configured here. It comes from the `encoder` group chosen
+# at the root, so that every arm receives the same one and ablation 1 varies the
+# temporal module alone (ADR-0011).
+
+name: shared_encoder
+
+encoder: ${encoder}
+
+classification_head:
+  dropout: 0.3
+
+# Present but unused unless an experiment enables it.
+temporal: null
+anatomy_head: null

@@ -16,6 +16,7 @@ trade-off. Everything else is just the obvious thing and needs no record.
 | [0008](0008-reproducibility-contract.md) | The reproducibility contract | accepted |
 | [0009](0009-anatomy-targets-from-oasis3-freesurfer.md) | Anatomy targets come from OASIS-3's shipped FreeSurfer outputs | accepted |
 | [0010](0010-subsampled-cohort-and-reduced-resolution.md) | Subsampled cohort at reduced resolution | accepted |
+| [0011](0011-pretrained-vit-encoder.md) | Pretrained 3D ViT-B/16 shared encoder, and its OASIS overlap | accepted |
 
 ADR-0004 is the one open decision. It must reach `accepted` before any model trains,
 because a label rule chosen after seeing results is not a label rule.
