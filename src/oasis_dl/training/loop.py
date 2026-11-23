@@ -21,8 +21,10 @@ from torch.utils.data import DataLoader
 
 from oasis_dl.evaluation.metrics import compute_metrics
 from oasis_dl.training.losses import AnatomyTargetScaler
+from oasis_dl.utils.provenance import RunProvenance
 
 __all__ = [
+    "PROVENANCE_FILENAME",
     "TrainingConfig",
     "evaluate_split",
     "pos_weight_from_labels",
@@ -30,6 +32,7 @@ __all__ = [
 ]
 
 HISTORY_FILENAME = "history.csv"
+PROVENANCE_FILENAME = "provenance.json"
 BEST_CHECKPOINT_FILENAME = "best.pt"
 
 
@@ -111,6 +114,7 @@ def train(
     output_dir: Path,
     device: torch.device | None = None,
     anatomy_scaler: AnatomyTargetScaler | None = None,
+    provenance: RunProvenance | None = None,
 ) -> Path:
     """Train one arm and return the path of its best checkpoint.
 
@@ -123,6 +127,10 @@ def train(
             targets before it is passed here (ADR-0007). Standardizing inside the loop
             rather than in the dataset keeps the fit in the caller's hands, where the
             partition it was fitted on is visible.
+        provenance: Written to ``output_dir`` **before the first batch** (ADR-0008), so
+            a run that crashes still leaves a record of what was attempted. A record
+            written at the end only ever describes runs that succeeded, which are the
+            ones least in need of explaining.
 
     Returns:
         Path to the checkpoint with the best validation metric.
@@ -134,6 +142,11 @@ def train(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+
+    # Before anything can fail. This is the whole reason provenance is captured at the
+    # start of a run rather than written out with the results.
+    if provenance is not None:
+        provenance.write(output_dir / PROVENANCE_FILENAME)
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay

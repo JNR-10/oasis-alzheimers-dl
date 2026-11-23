@@ -60,8 +60,8 @@ ablation:  ## Run the two core ablations across all five experiments
 	$(PYTHON) -m oasis_dl.cli.train --multirun \
 		experiment=baseline_single_scan,proposed_a_longitudinal,proposed_b_anatomy
 
-report:  ## Regenerate result tables and figures from recorded runs
-	$(PYTHON) -m oasis_dl.cli.evaluate --multirun experiment='glob(*)'
+report:  ## Regenerate result tables from recorded runs (reads records, reruns nothing)
+	$(PYTHON) -m oasis_dl.cli.report
 
 # --- housekeeping ----------------------------------------------------------
 

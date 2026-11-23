@@ -15,10 +15,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 import torch
 from torch.utils.data import DataLoader
 
+from oasis_dl.cli.report import main as report_main
 from oasis_dl.data.dataset import (
     VisitSequenceDataset,
     collate_sequences,
@@ -31,11 +33,13 @@ from oasis_dl.data.splits import (
     subject_label,
 )
 from oasis_dl.data.synthetic import SyntheticCohort, SyntheticCohortSpec
+from oasis_dl.evaluation.bootstrap import bootstrap_metrics
 from oasis_dl.evaluation.metrics import (
     compute_metrics,
     select_threshold,
     write_metrics_table,
 )
+from oasis_dl.evaluation.reporting import write_run_results
 from oasis_dl.models.arms import LongitudinalModel, SingleScanModel
 from oasis_dl.models.encoder import VisitEncoder
 from oasis_dl.models.heads import AnatomyHead, ClassificationHead
@@ -44,6 +48,7 @@ from oasis_dl.training.loop import TrainingConfig, evaluate_split, pos_weight_fr
 from oasis_dl.training.losses import AnatomyTargetScaler, CombinedObjective
 from oasis_dl.training.seed import seed_everything
 from oasis_dl.types import Partition, VisitSequence
+from oasis_dl.utils.provenance import RunProvenance
 
 SHAPE = (8, 8, 8)
 DIM = 16
@@ -158,16 +163,17 @@ def _encoder() -> VisitEncoder:
 
 
 def _config(**overrides: object) -> TrainingConfig:
-    return TrainingConfig(
-        max_epochs=2,
-        batch_size=2,
-        accumulate_grad_batches=2,
-        mixed_precision=False,
-        early_stopping_patience=5,
-        learning_rate=1e-3,
-        seed=7,
-        **overrides,  # type: ignore[arg-type]
-    )
+    settings: dict[str, object] = {
+        "max_epochs": 2,
+        "batch_size": 2,
+        "accumulate_grad_batches": 2,
+        "mixed_precision": False,
+        "early_stopping_patience": 5,
+        "learning_rate": 1e-3,
+        "seed": 7,
+    }
+    settings.update(overrides)
+    return TrainingConfig(**settings)  # type: ignore[arg-type]
 
 
 def _objective(
@@ -352,3 +358,100 @@ class TestTheControlsHold:
         """Otherwise ROC-AUC is undefined on test and the arm reports nothing."""
         for partition, sequences in partitioned.items():
             assert len({int(s.label) for s in sequences}) == 2, partition
+
+
+@pytest.mark.slow
+class TestTablesAreRegeneratedFromRecords:
+    """#12: the report's numbers come from recorded runs, by a command.
+
+    ``AGENTS.md`` forbids a typed results table. This is the end-to-end proof that the
+    rule is satisfiable: two seeds trained, each recording its own provenance and
+    results, then one command turning those records into a table whose every number
+    traces back to a file a run wrote.
+    """
+
+    def test_two_seeds_become_one_table_with_an_across_seed_interval(
+        self, partitioned: dict[Partition, list[VisitSequence]], tmp_path: Path
+    ) -> None:
+        runs = tmp_path / "experiments"
+        recorded: dict[int, float] = {}
+
+        for seed in (1, 2):
+            seed_everything(seed, deterministic=False)
+            train_loader, val_loader = _loaders(partitioned, single_scan_collate)
+            model = SingleScanModel(_encoder(), ClassificationHead(embedding_dim=DIM))
+            run_dir = runs / f"baseline_single_scan_seed{seed}"
+
+            train(
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                objective=_objective(partitioned),
+                config=_config(max_epochs=1, seed=seed),
+                output_dir=run_dir,
+                device=torch.device("cpu"),
+                provenance=RunProvenance(
+                    run_id=f"b1-{seed}",
+                    experiment="baseline_single_scan",
+                    git_commit="a" * 40,
+                    git_dirty=False,
+                    seed=seed,
+                    timestamp="2026-11-23T00:00:00+00:00",
+                    manifest_path="synthetic",
+                    python_version="3.11.0",
+                    platform="test",
+                ),
+            )
+            # Written before a single batch ran, so a crash would still leave it.
+            assert (run_dir / "provenance.json").exists()
+
+            val_labels, val_scores, _ = evaluate_split(model, val_loader, torch.device("cpu"))
+            threshold = select_threshold(val_labels, val_scores)
+            held_out = DataLoader(
+                VisitSequenceDataset(partitioned[Partition.TEST], seed=0),
+                batch_size=2,
+                collate_fn=single_scan_collate,
+            )
+            labels, scores, subjects = evaluate_split(model, held_out, torch.device("cpu"))
+            metrics = compute_metrics(labels, scores, threshold=threshold)
+            recorded[seed] = metrics.roc_auc
+
+            write_run_results(
+                run_dir,
+                arm="B1",
+                partition="test",
+                metrics=metrics,
+                n_subjects=len(set(subjects)),
+                n_visits=len(labels),
+                intervals=bootstrap_metrics(
+                    labels,
+                    scores,
+                    subjects,
+                    threshold=threshold,
+                    metrics=("roc_auc",),
+                    n_resamples=50,
+                    seed=seed,
+                ),
+            )
+
+        out = tmp_path / "tables" / "results"
+        assert report_main(["--runs", str(runs), "--out", str(out)]) == 0
+
+        table = pd.read_csv(out.with_suffix(".csv"))
+        row = table.query("arm == 'B1' and metric == 'roc_auc'").iloc[0]
+
+        assert row["n_seeds"] == 2
+        assert row["interval_kind"] == "across-seed"
+        assert row["commit"] == "a" * 7
+        assert not bool(row["dirty"])
+        # Every number traces to a recorded run rather than to this test.
+        assert row["point"] == pytest.approx(sum(recorded.values()) / 2)
+        assert row["interval_low"] == pytest.approx(min(recorded.values()))
+        assert row["interval_high"] == pytest.approx(max(recorded.values()))
+        assert out.with_suffix(".md").exists()
+
+    def test_the_command_fails_rather_than_writing_an_empty_table(self, tmp_path: Path) -> None:
+        """A report build that silently produced an empty table would be worse than one
+        that stopped."""
+        assert report_main(["--runs", str(tmp_path / "nothing"), "--out", str(tmp_path / "t")]) == 1
+        assert not (tmp_path / "t.csv").exists()

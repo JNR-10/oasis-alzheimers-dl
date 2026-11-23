@@ -18,6 +18,7 @@ Two properties fail silently:
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,7 @@ from torch.utils.data import DataLoader, Dataset
 from oasis_dl.data.dataset import SequenceBatch
 from oasis_dl.training.loop import TrainingConfig, evaluate_split, pos_weight_from_labels, train
 from oasis_dl.training.losses import AnatomyTargetScaler, CombinedObjective
+from oasis_dl.utils.provenance import RunProvenance
 
 
 class _Batches(Dataset[SequenceBatch]):
@@ -333,6 +335,57 @@ class TestAnEmptyEpochIsAnError:
                 config=TrainingConfig(max_epochs=1, mixed_precision=False),
                 output_dir=tmp_path,
             )
+
+
+class TestProvenanceIsWrittenAtRunStart:
+    """ADR-0008, and the reason provenance is captured before training rather than
+    recorded with the results."""
+
+    @staticmethod
+    def _record() -> RunProvenance:
+        return RunProvenance(
+            run_id="r1",
+            experiment="baseline_single_scan",
+            git_commit="a" * 40,
+            git_dirty=False,
+            seed=7,
+            timestamp="2026-11-23T00:00:00+00:00",
+            manifest_path="cohort.parquet",
+            python_version="3.11.0",
+            platform="test",
+        )
+
+    def test_it_lands_before_the_first_batch(self, tmp_path: Path) -> None:
+        train(
+            model=_ScriptedModel([PERFECT]),
+            train_loader=_loader([_batch(LABELS)]),
+            val_loader=_loader([_batch(LABELS)]),
+            objective=CombinedObjective(),
+            config=TrainingConfig(max_epochs=1, mixed_precision=False),
+            output_dir=tmp_path,
+            provenance=self._record(),
+        )
+        assert json.loads((tmp_path / "provenance.json").read_text())["seed"] == 7
+
+    def test_a_crashed_run_still_leaves_its_record(self, tmp_path: Path) -> None:
+        """The whole point. A record written at the end only ever describes runs that
+        succeeded, which are the ones least in need of explaining."""
+
+        class _Exploding(_ScriptedModel):
+            def forward(self, batch: SequenceBatch) -> dict[str, torch.Tensor]:
+                raise RuntimeError("CUDA out of memory")
+
+        with pytest.raises(RuntimeError, match="out of memory"):
+            train(
+                model=_Exploding([PERFECT]),
+                train_loader=_loader([_batch(LABELS)]),
+                val_loader=_loader([_batch(LABELS)]),
+                objective=CombinedObjective(),
+                config=TrainingConfig(max_epochs=1, mixed_precision=False),
+                output_dir=tmp_path,
+                provenance=self._record(),
+            )
+        assert (tmp_path / "provenance.json").exists()
 
 
 class TestReproducibility:
