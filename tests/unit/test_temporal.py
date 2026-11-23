@@ -26,6 +26,20 @@ def _module(**kwargs: object) -> TemporalAttention:
     return TemporalAttention(embedding_dim=DIM, n_heads=4, n_layers=2, dropout=0.0, **kwargs).eval()  # type: ignore[arg-type]
 
 
+def _scalarize(out: torch.Tensor, seed: int = 0) -> torch.Tensor:
+    """Reduce to a scalar through a random projection rather than ``.sum()``.
+
+    Every path here ends in a LayerNorm, whose output sums to zero for *any* input
+    because it is normalised to zero mean. So ``out.sum()`` has an exactly zero
+    derivative with respect to everything upstream, and a gradient test built on it
+    reports "no gradient" whatever the module does. torch 2.2 leaked enough float noise
+    to hide that; torch 2.15 computes the clean zero and the test failed honestly.
+    """
+    generator = torch.Generator().manual_seed(seed)
+    weights = torch.randn(out.shape, generator=generator)
+    return (out * weights).sum()
+
+
 def _years(*days: float) -> torch.Tensor:
     return torch.tensor([list(days)], dtype=torch.float32)
 
@@ -157,7 +171,8 @@ class TestTimeIsNotPosition:
     def test_elapsed_time_reaches_the_output_through_gradients(self) -> None:
         module = TemporalAttention(embedding_dim=DIM, n_heads=4, n_layers=2, dropout=0.0)
         elapsed = _years(-400, 0).requires_grad_(True)
-        module(torch.randn(1, 2, DIM), elapsed, torch.ones(1, 2, dtype=torch.bool)).sum().backward()
+        out = module(torch.randn(1, 2, DIM), elapsed, torch.ones(1, 2, dtype=torch.bool))
+        _scalarize(out).backward()
         assert elapsed.grad is not None and elapsed.grad.abs().sum() > 0
 
 
@@ -171,6 +186,6 @@ class TestKeptSmall:
     def test_gradients_reach_every_block(self) -> None:
         module = TemporalAttention(embedding_dim=DIM, n_heads=4, n_layers=2, dropout=0.0)
         out = module(torch.randn(2, 3, DIM), torch.zeros(2, 3), torch.ones(2, 3, dtype=torch.bool))
-        out.sum().backward()
+        _scalarize(out).backward()
         starved = [n for n, p in module.named_parameters() if p.grad is None or not p.grad.any()]
         assert not starved, f"no gradient reached: {starved}"

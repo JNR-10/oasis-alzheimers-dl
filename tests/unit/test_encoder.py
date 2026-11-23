@@ -152,6 +152,20 @@ class TestMemoryFootprint:
         assert peak < 16_000, "footprint would not fit a typical training GPU"
 
 
+def _scalarize(out: torch.Tensor, seed: int = 0) -> torch.Tensor:
+    """Reduce to a scalar through a random projection rather than ``.sum()``.
+
+    Every path here ends in a LayerNorm, whose output sums to zero for *any* input
+    because it is normalised to zero mean. So ``out.sum()`` has an exactly zero
+    derivative with respect to everything upstream, and a gradient test built on it
+    reports "no gradient" whatever the module does. torch 2.2 leaked enough float noise
+    to hide that; torch 2.15 computes the clean zero and the test failed honestly.
+    """
+    generator = torch.Generator().manual_seed(seed)
+    weights = torch.randn(out.shape, generator=generator)
+    return (out * weights).sum()
+
+
 TINY = (16, 16, 16)
 """A shape every backbone here accepts, and small enough to run on a laptop."""
 
@@ -197,7 +211,7 @@ class TestVisionTransformerBackbone:
 
     def test_gradients_reach_the_transformer(self) -> None:
         encoder = _tiny_vit(embedding_dim=32)
-        encoder(torch.randn(2, 1, *TINY)).sum().backward()
+        _scalarize(encoder(torch.randn(2, 1, *TINY))).backward()
         grads = [p.grad for p in encoder.parameters() if p.grad is not None]
         assert grads and any(g.abs().sum() > 0 for g in grads)
 
