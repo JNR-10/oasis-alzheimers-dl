@@ -10,6 +10,8 @@ fallback of ADR-0003 is a different implementation rather than a rewrite.
 
 from __future__ import annotations
 
+import random
+from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,10 +111,52 @@ def sample_subjects(
     Raises:
         ValueError: If ``max_subjects`` is negative or ``subject_labels`` is empty.
     """
-    raise NotImplementedError(
-        "Sampling is drawn once and frozen (ADR-0010). Raising max_subjects later "
-        "produces a different cohort, not a bigger one."
-    )
+    if not subject_labels:
+        raise ValueError("subject_labels is empty — nothing to sample")
+    if max_subjects is not None and max_subjects < 0:
+        raise ValueError(f"max_subjects must be non-negative, got {max_subjects}")
+
+    # Sort first so dict insertion order cannot change the draw (ADR-0010 / ADR-0001).
+    candidates = sorted(subject_labels)
+    n = len(candidates)
+    if max_subjects is None or max_subjects >= n:
+        return candidates
+
+    if max_subjects == 0:
+        return []
+
+    by_label: dict[Label, list[SubjectId]] = defaultdict(list)
+    for subject_id in candidates:
+        by_label[subject_labels[subject_id]].append(subject_id)
+
+    # Largest-remainder allocation keeps the sample's label ratio near the population's
+    # without overshooting a class that has few subjects.
+    quotas: dict[Label, int] = {}
+    remainders: list[tuple[float, Label]] = []
+    allocated = 0
+    for label in sorted(by_label, key=lambda lab: lab.value):
+        exact = max_subjects * len(by_label[label]) / n
+        floor = int(exact)
+        quotas[label] = floor
+        allocated += floor
+        remainders.append((exact - floor, label))
+    remainders.sort(key=lambda item: (-item[0], item[1].value))
+    for i in range(max_subjects - allocated):
+        quotas[remainders[i][1]] += 1
+
+    rng = random.Random(seed)
+    sampled: list[SubjectId] = []
+    for label in sorted(quotas, key=lambda lab: lab.value):
+        pool = by_label[label]
+        k = quotas[label]
+        if k >= len(pool):
+            sampled.extend(pool)
+            continue
+        draw = pool.copy()
+        rng.shuffle(draw)
+        sampled.extend(draw[:k])
+
+    return sorted(sampled)
 
 
 def build_visits(
