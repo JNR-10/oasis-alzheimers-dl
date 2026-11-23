@@ -11,11 +11,47 @@ invites it into a table where it would mislead.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import numpy as np
 from numpy.typing import NDArray
+
+__all__ = [
+    "ClassificationMetrics",
+    "aggregate_by_subject",
+    "compute_metrics",
+    "select_threshold",
+]
+
+
+def _as_arrays(
+    y_true: Sequence[int] | NDArray[np.int_],
+    y_score: Sequence[float] | NDArray[np.float64],
+) -> tuple[NDArray[np.int_], NDArray[np.float64]]:
+    """Validate the pair once, so every entry point refuses the same bad input."""
+    labels = np.asarray(y_true, dtype=int)
+    scores = np.asarray(y_score, dtype=float)
+    if labels.size == 0:
+        raise ValueError("no predictions to score")
+    if labels.shape != scores.shape:
+        raise ValueError(
+            f"y_true has {labels.shape} entries and y_score has {scores.shape}; "
+            f"they must align element-wise"
+        )
+    if not np.isin(labels, (0, 1)).all():
+        raise ValueError(f"labels must be 0 or 1, found {sorted(set(labels.tolist()))}")
+    return labels, scores
+
+
+def _ratio(numerator: int, denominator: int) -> float:
+    """NaN when the denominator is empty, never a stand-in value.
+
+    Specificity with no negatives is not 0, not 1, and not 0.5 — it is unmeasured, and
+    a number here would be reported as though it had been measured.
+    """
+    return float(numerator) / denominator if denominator else float("nan")
 
 
 @dataclass(frozen=True)
@@ -56,7 +92,7 @@ class ClassificationMetrics:
 
     def as_dict(self) -> dict[str, float | int]:
         """Flat mapping, for writing into a results table."""
-        raise NotImplementedError
+        return dict(asdict(self))
 
 
 def compute_metrics(
@@ -79,7 +115,53 @@ def compute_metrics(
     Raises:
         ValueError: If inputs are empty or of different lengths.
     """
-    raise NotImplementedError
+    labels, scores = _as_arrays(y_true, y_score)
+    predicted = scores >= threshold
+
+    true_positives = int(np.sum(predicted & (labels == 1)))
+    false_negatives = int(np.sum(~predicted & (labels == 1)))
+    true_negatives = int(np.sum(~predicted & (labels == 0)))
+    false_positives = int(np.sum(predicted & (labels == 0)))
+
+    sensitivity = _ratio(true_positives, true_positives + false_negatives)
+    specificity = _ratio(true_negatives, true_negatives + false_positives)
+
+    return ClassificationMetrics(
+        roc_auc=_roc_auc(labels, scores),
+        # NaN propagates: with one class absent this is unmeasured, and the mean of a
+        # measured half and an unmeasured half is not a balanced accuracy.
+        balanced_accuracy=(sensitivity + specificity) / 2,
+        macro_f1=_macro_f1(labels, predicted),
+        sensitivity=sensitivity,
+        specificity=specificity,
+        true_negatives=true_negatives,
+        false_positives=false_positives,
+        false_negatives=false_negatives,
+        true_positives=true_positives,
+        threshold=float(threshold),
+        n=int(labels.size),
+        n_impaired=int(np.sum(labels == 1)),
+    )
+
+
+def _roc_auc(labels: NDArray[np.int_], scores: NDArray[np.float64]) -> float:
+    """Threshold-free ranking quality, or NaN when only one class is present.
+
+    NaN rather than 0.5 is the whole point: a single-class partition has no ranking to
+    be right or wrong about, and 0.5 would be read as "no better than chance".
+    """
+    if np.unique(labels).size < 2:
+        return float("nan")
+    from sklearn.metrics import roc_auc_score
+
+    return float(roc_auc_score(labels, scores))
+
+
+def _macro_f1(labels: NDArray[np.int_], predicted: NDArray[np.bool_]) -> float:
+    """F1 averaged over classes, so the minority class weighs as much as the majority."""
+    from sklearn.metrics import f1_score
+
+    return float(f1_score(labels, predicted.astype(int), average="macro", zero_division=0))
 
 
 def select_threshold(
@@ -104,7 +186,36 @@ def select_threshold(
     Raises:
         ValueError: If both classes are not present, or the objective is unknown.
     """
-    raise NotImplementedError
+    labels, scores = _as_arrays(y_true, y_score)
+    if np.unique(labels).size < 2:
+        raise ValueError(
+            "cannot choose a threshold from a single-class validation set: there is no "
+            "trade-off to balance."
+        )
+    if objective not in _OBJECTIVES:
+        raise ValueError(
+            f"unknown objective {objective!r}; supported: {', '.join(sorted(_OBJECTIVES))}"
+        )
+
+    from sklearn.metrics import roc_curve
+
+    false_positive_rate, true_positive_rate, thresholds = roc_curve(labels, scores)
+    if objective == "youden":
+        best = int(np.argmax(true_positive_rate - false_positive_rate))
+    else:
+        reaching = np.flatnonzero(true_positive_rate >= _SENSITIVITY_FLOOR)
+        # The lowest threshold always reaches sensitivity 1.0, so `reaching` is never
+        # empty and the floor is always attainable.
+        best = int(reaching[np.argmin(false_positive_rate[reaching])])
+
+    chosen = float(thresholds[best])
+    # roc_curve prepends an infinite threshold representing "predict nothing". Returning
+    # it would classify every subject as normal while looking like a valid choice.
+    return chosen if math.isfinite(chosen) else float(np.max(scores))
+
+
+_OBJECTIVES = frozenset({"youden", "sensitivity_first"})
+_SENSITIVITY_FLOOR = 0.90
 
 
 def aggregate_by_subject(
@@ -123,5 +234,24 @@ def aggregate_by_subject(
 
     Returns:
         Labels, scores, and subject ids, ordered by subject id.
+
+    Raises:
+        ValueError: If the three inputs are not the same length.
     """
-    raise NotImplementedError
+    labels, scores = _as_arrays(y_true, y_score)
+    if len(subject_ids) != labels.size:
+        raise ValueError(
+            f"{len(subject_ids)} subject ids for {labels.size} predictions; every "
+            f"prediction must name the subject it came from"
+        )
+
+    rows: dict[str, list[int]] = {}
+    for index, subject in enumerate(subject_ids):
+        rows.setdefault(str(subject), []).append(index)
+
+    ordered = sorted(rows)
+    subject_labels = np.array([int(labels[rows[subject]].max()) for subject in ordered], dtype=int)
+    subject_scores = np.array(
+        [float(scores[rows[subject]].mean()) for subject in ordered], dtype=float
+    )
+    return subject_labels, subject_scores, ordered
