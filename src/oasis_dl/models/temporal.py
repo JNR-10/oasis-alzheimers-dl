@@ -45,6 +45,10 @@ class ElapsedTimeEncoding(nn.Module):
             width would silently drop a frequency.
     """
 
+    # Declared here because ``register_buffer`` leaves the attribute's type ambiguous —
+    # mypy otherwise reads it as ``dtype | Tensor | Module`` and rejects every use.
+    frequencies: torch.Tensor
+
     def __init__(
         self,
         embedding_dim: int,
