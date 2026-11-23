@@ -15,9 +15,9 @@ a pure record of what happened.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import NamedTuple, cast
+from typing import Any, NamedTuple, cast
 
 import nibabel as nib
 import numpy as np
@@ -70,6 +70,19 @@ class SequenceBatch:
     anatomy_targets: torch.Tensor | None
     anatomy_mask: torch.Tensor | None
     subject_ids: tuple[str, ...]
+
+    def to(self, device: torch.device) -> SequenceBatch:
+        """Move every tensor field, leaving the subject ids where they are.
+
+        Written over ``fields()`` rather than field by field so that a tensor added to
+        this batch later cannot be silently left on the CPU — which surfaces as a device
+        mismatch deep inside a model, naming a layer nobody wrote.
+        """
+        moved: dict[str, Any] = {}
+        for field in fields(self):
+            value = getattr(self, field.name)
+            moved[field.name] = value.to(device) if isinstance(value, torch.Tensor) else value
+        return SequenceBatch(**moved)
 
 
 @dataclass(frozen=True)

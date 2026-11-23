@@ -73,6 +73,34 @@ class TestTheArmsDifferOnlyWhereTheyShould:
         differing = {k for k in set(b1) | set(pa) if b1.get(k) != pa.get(k)}
         assert differing == {"name", "temporal"}, f"unexpected difference: {differing}"
 
+    def test_b1_and_pa_differ_only_in_the_temporal_module_and_the_collate(self) -> None:
+        """#10's acceptance criterion, stated over the whole resolved config.
+
+        Both arms read the same sequences through the same loop with the same budget;
+        only how much of each sequence the architecture may use changes. Any third
+        difference turns ablation 1 into a comparison of two things at once.
+        """
+        b1 = _compose("experiment=baseline_single_scan")
+        pa = _compose("experiment=proposed_a_longitudinal")
+        assert b1.training.collate == "single_scan"
+        assert pa.training.collate == "sequence"
+        assert b1.model.temporal is None and pa.model.temporal is not None
+
+        for section in ("data", "evaluation", "encoder"):
+            assert OmegaConf.to_container(b1[section], resolve=True) == OmegaConf.to_container(
+                pa[section], resolve=True
+            ), f"{section} differs between B1 and PA"
+
+        b1_training = OmegaConf.to_container(b1.training, resolve=True)
+        pa_training = OmegaConf.to_container(pa.training, resolve=True)
+        assert isinstance(b1_training, dict) and isinstance(pa_training, dict)
+        differing = {
+            k
+            for k in set(b1_training) | set(pa_training)
+            if b1_training.get(k) != pa_training.get(k)
+        }
+        assert differing == {"collate"}, f"training differs beyond collate: {differing}"
+
     def test_the_anatomy_head_is_the_only_difference_between_pa_and_pb(self) -> None:
         """Ablation 2, stated as a diff. The anatomy head is discarded at inference
         (ADR-0007), so anything else differing here leaks into the test-time pathway."""

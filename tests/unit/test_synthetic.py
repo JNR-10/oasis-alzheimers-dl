@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from oasis_dl.data.synthetic import SyntheticCohort, SyntheticCohortSpec
@@ -239,3 +240,80 @@ class TestCohortSourceProtocol:
         latent = cohort.latent_atrophy()
         assert "atrophy" in latent.columns
         assert len(latent) == len(cohort.sessions())
+
+
+class TestAnatomyTargets:
+    """Training targets for the auxiliary objective (ADR-0007), never inference features.
+
+    Correlating them with the label is the *point* here, not a leak — which is exactly
+    why they must stay out of :meth:`sessions`, the frame a model is allowed to read.
+    """
+
+    def test_visits_carry_named_structural_volumes(self, synthetic_cohort: SyntheticCohort) -> None:
+        carried = [v.anatomy_targets for v in synthetic_cohort.visits() if v.anatomy_targets]
+        assert carried
+        assert set(carried[0]) == set(synthetic_cohort.spec.anatomy_target_names)
+
+    def test_the_volumes_are_in_a_plausible_range(self, synthetic_cohort: SyntheticCohort) -> None:
+        """Realistic mm^3, so a pipeline that forgets to standardize them produces an
+        auxiliary term large enough to be noticed rather than one that quietly works."""
+        for visit in synthetic_cohort.visits():
+            if not visit.anatomy_targets:
+                continue
+            assert 1000 < visit.anatomy_targets["hippocampus_left_mm3"] < 6000
+            assert 300_000 < visit.anatomy_targets["total_gray_matter_mm3"] < 900_000
+
+    def test_some_visits_have_none(self, synthetic_cohort: SyntheticCohort) -> None:
+        """ADR-0009: not every OASIS-3 session ships FreeSurfer output. A cohort where
+        every visit has targets cannot exercise the per-sequence mask that requires."""
+        present = [bool(v.anatomy_targets) for v in synthetic_cohort.visits()]
+        assert any(present) and not all(present)
+
+    def test_targets_never_appear_in_the_readable_session_frame(
+        self, synthetic_cohort: SyntheticCohort
+    ) -> None:
+        """The leak this separation prevents. These correlate with the label by design,
+        so a model that could read them would be reading the answer."""
+        columns = set(synthetic_cohort.sessions().columns)
+        for name in synthetic_cohort.spec.anatomy_target_names:
+            assert name not in columns
+        assert not any("hippocamp" in c or "gray_matter" in c for c in columns)
+
+    def test_they_shrink_as_the_latent_atrophy_grows(
+        self, synthetic_cohort: SyntheticCohort
+    ) -> None:
+        """Otherwise the auxiliary objective would be regression onto noise, and
+        ablation 2 would measure nothing either way."""
+        latent = synthetic_cohort.latent_atrophy().set_index("session_id")["atrophy"]
+        pairs = [
+            (float(latent[str(v.session_id)]), v.anatomy_targets["total_gray_matter_mm3"])
+            for v in synthetic_cohort.visits()
+            if v.anatomy_targets
+        ]
+        atrophy = np.array([p[0] for p in pairs])
+        volume = np.array([p[1] for p in pairs])
+        assert np.corrcoef(atrophy, volume)[0, 1] < -0.5
+
+    def test_an_empty_target_set_produces_a_cohort_with_none(self, tmp_path: Path) -> None:
+        """What arm PA sees: no auxiliary targets anywhere."""
+        cohort = SyntheticCohort(
+            root=tmp_path,
+            spec=SyntheticCohortSpec(
+                n_subjects=4, volume_shape=(8, 8, 8), anatomy_target_names=(), seed=0
+            ),
+        ).generate()
+        assert all(v.anatomy_targets is None for v in cohort.visits())
+
+    def test_duplicate_target_names_are_refused(self) -> None:
+        with pytest.raises(ValueError, match="unique"):
+            SyntheticCohortSpec(anatomy_target_names=("a", "b", "a"))
+
+    def test_the_same_seed_reproduces_the_targets(self, tmp_path: Path) -> None:
+        def build(where: str) -> list[dict[str, float] | None]:
+            cohort = SyntheticCohort(
+                root=tmp_path / where,
+                spec=SyntheticCohortSpec(n_subjects=6, volume_shape=(8, 8, 8), seed=3),
+            ).generate()
+            return [v.anatomy_targets for v in cohort.visits()]
+
+        assert build("a") == build("b")

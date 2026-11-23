@@ -11,9 +11,11 @@ invites it into a table where it would mislead.
 
 from __future__ import annotations
 
+import csv
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,6 +25,7 @@ __all__ = [
     "aggregate_by_subject",
     "compute_metrics",
     "select_threshold",
+    "write_metrics_table",
 ]
 
 
@@ -216,6 +219,28 @@ def select_threshold(
 
 _OBJECTIVES = frozenset({"youden", "sensitivity_first"})
 _SENSITIVITY_FLOOR = 0.90
+
+
+def write_metrics_table(rows: Mapping[str, ClassificationMetrics], path: Path) -> Path:
+    """Write one row per arm, generated from recorded metrics.
+
+    ``AGENTS.md``: results tables are generated from recorded runs, never typed. This is
+    the per-run writer — one table for one evaluation. Aggregating across seeds and arms
+    into the report's tables is #12 and builds on this rather than re-deriving it.
+
+    Returns:
+        The path written, so a caller can record it with the run.
+    """
+    if not rows:
+        raise ValueError("no metrics to write; an empty table is worse than no table")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    columns = ["arm", *next(iter(rows.values())).as_dict()]
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        for arm, metrics in rows.items():
+            writer.writerow({"arm": arm, **metrics.as_dict()})
+    return path
 
 
 def aggregate_by_subject(

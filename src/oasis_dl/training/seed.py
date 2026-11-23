@@ -7,6 +7,14 @@ unrecorded randomness is not a controlled comparison.
 
 from __future__ import annotations
 
+import os
+import random
+
+import numpy as np
+import torch
+
+__all__ = ["seed_everything", "seed_worker"]
+
 
 def seed_everything(seed: int, *, deterministic: bool = True) -> None:
     """Seed Python, NumPy, and Torch, and optionally force deterministic kernels.
@@ -19,7 +27,18 @@ def seed_everything(seed: int, *, deterministic: bool = True) -> None:
         deterministic: Trade throughput for exact repeatability. On for reported runs;
             worth turning off while exploring.
     """
-    raise NotImplementedError
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    if deterministic:
+        # Set before any CUDA context work. Without it some cuBLAS reductions stay
+        # nondeterministic whatever the torch flags say, which would make this
+        # function a promise it does not keep.
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cudnn.benchmark = not deterministic
 
 
 def seed_worker(worker_id: int) -> None:
@@ -28,4 +47,8 @@ def seed_worker(worker_id: int) -> None:
     Without this, workers inherit a shared seed and several can draw identical
     augmentations — which looks like a smaller, less varied dataset than you have.
     """
-    raise NotImplementedError
+    # Derived from torch's own per-worker seed, so the whole scheme still follows from
+    # the one seed recorded with the run.
+    worker_seed = (torch.initial_seed() + worker_id) % 2**32
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)

@@ -60,6 +60,12 @@ class SyntheticCohortSpec:
         max_gap_days: Longest gap between consecutive visits. Irregular spacing is the
             point — a uniform grid would let the temporal module ignore elapsed time
             and still look correct (ADR-0006).
+        anatomy_target_names: Structural quantities attached to each visit as
+            **training targets** for the auxiliary objective (ADR-0007). An empty tuple
+            produces a cohort with no targets at all, which is what arm PA sees.
+        anatomy_missing_fraction: Share of visits with no targets. Not every OASIS-3
+            session ships FreeSurfer output (ADR-0009), and a cohort where every visit
+            has them cannot exercise the per-sequence mask that fact requires.
         signal_strength: Depth of the atrophy proxy. 0 produces pure noise.
         noise_sigma: Standard deviation of the background noise.
         seed: Everything below is a deterministic function of this.
@@ -74,6 +80,12 @@ class SyntheticCohortSpec:
     voxel_size_mm: float = 2.0
     min_gap_days: int = 150
     max_gap_days: int = 900
+    anatomy_target_names: tuple[str, ...] = (
+        "hippocampus_left_mm3",
+        "hippocampus_right_mm3",
+        "total_gray_matter_mm3",
+    )
+    anatomy_missing_fraction: float = 0.15
     signal_strength: float = 0.6
     noise_sigma: float = 0.1
     seed: int = 0
@@ -105,6 +117,10 @@ class SyntheticCohortSpec:
             raise ValueError("unlabeled_fraction must be a proportion")
         if self.min_gap_days < 1 or self.max_gap_days < self.min_gap_days:
             raise ValueError("gap days must be positive with max >= min")
+        if not 0.0 <= self.anatomy_missing_fraction <= 1.0:
+            raise ValueError("anatomy_missing_fraction must be a proportion")
+        if len(set(self.anatomy_target_names)) != len(self.anatomy_target_names):
+            raise ValueError("anatomy_target_names must be unique")
 
 
 @dataclass
@@ -130,6 +146,7 @@ class SyntheticCohort:
         self.spec = spec if spec is not None else SyntheticCohortSpec()
         self._sessions: pd.DataFrame | None = None
         self._atrophy: list[float] = []
+        self._anatomy: list[dict[str, float] | None] = []
 
     # ---------------------------------------------------------------- generation
 
@@ -141,6 +158,7 @@ class SyntheticCohort:
         plans = self._plan_subjects(rng)
         rows: list[dict[str, object]] = []
         atrophies: list[float] = []
+        anatomy: list[dict[str, float] | None] = []
         for plan in plans:
             for day in plan.days:
                 atrophy = plan.baseline_atrophy + plan.atrophy_per_year * (day / 365.0)
@@ -157,6 +175,7 @@ class SyntheticCohort:
                 )
                 path = self._write_scan(plan.subject_id, session_id, atrophy, rng)
                 atrophies.append(float(atrophy))
+                anatomy.append(self._draw_anatomy(float(atrophy), rng))
                 rows.append(
                     {
                         "subject_id": str(plan.subject_id),
@@ -169,7 +188,32 @@ class SyntheticCohort:
 
         self._sessions = pd.DataFrame(rows)
         self._atrophy = atrophies
+        self._anatomy = anatomy
         return self
+
+    def _draw_anatomy(self, atrophy: float, rng: np.random.Generator) -> dict[str, float] | None:
+        """Structural volumes for one session, shrinking with the latent atrophy.
+
+        Training targets, never inference features (ADR-0007), so correlating them with
+        the label is the point rather than a leak — they are deliberately absent from
+        :meth:`sessions`, which is the frame a model may read.
+
+        Returns None for a share of sessions, standing in for the OASIS-3 sessions with
+        no FreeSurfer output (ADR-0009).
+        """
+        if not self.spec.anatomy_target_names:
+            return None
+        if rng.random() < self.spec.anatomy_missing_fraction:
+            return None
+        # Rough adult volumes in mm^3, so a pipeline that forgets to standardize them
+        # produces an auxiliary term large enough to notice.
+        bases = {"hippocampus": 3800.0, "total_gray_matter": 620000.0}
+        drawn: dict[str, float] = {}
+        for name in self.spec.anatomy_target_names:
+            base = next((value for key, value in bases.items() if name.startswith(key)), 5000.0)
+            shrink = 1.0 - 0.25 * atrophy
+            drawn[name] = float(base * shrink * (1.0 + 0.02 * rng.standard_normal()))
+        return drawn
 
     def _plan_subjects(self, rng: np.random.Generator) -> list[_SubjectPlan]:
         """Draw each subject's trajectory and visit days.
@@ -275,7 +319,12 @@ class SyntheticCohort:
 
     def visits(self) -> list[Visit]:
         """Every session as a :class:`~oasis_dl.types.Visit`, chronological per subject."""
-        frame = self.sessions().sort_values(["subject_id", "days_from_entry"])
+        unsorted = self.sessions()
+        # Keyed by session before sorting, so reordering cannot shuffle a subject's
+        # targets onto someone else's visit. `strict=True` because a length mismatch
+        # here would silently pair every target with the wrong session.
+        by_session = dict(zip(unsorted["session_id"], self._anatomy, strict=True))
+        frame = unsorted.sort_values(["subject_id", "days_from_entry"])
         out: list[Visit] = []
         for row in frame.itertuples():
             raw_label = row.label
@@ -286,6 +335,7 @@ class SyntheticCohort:
                     days_from_entry=int(row.days_from_entry),
                     scan_path=Path(str(row.scan_path)),
                     label=None if pd.isna(raw_label) else Label(int(raw_label)),
+                    anatomy_targets=by_session[str(row.session_id)],
                 )
             )
         return out

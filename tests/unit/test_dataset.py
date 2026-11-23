@@ -8,6 +8,7 @@ still training, still converging, and still producing a plausible number.
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ import torch
 
 from oasis_dl.data.dataset import (
     LoadedSequence,
+    SequenceBatch,
     VisitSequenceDataset,
     collate_sequences,
     single_scan_collate,
@@ -318,3 +320,35 @@ class TestAnatomyTargets:
         assert batch.anatomy_targets is not None
         torch.testing.assert_close(batch.anatomy_targets, torch.tensor([[1.0, 2.0]]))
         assert batch.anatomy_mask is not None and batch.anatomy_mask.all()
+
+
+class TestBatchDeviceMove:
+    """``SequenceBatch.to`` — small, but it is the one place that knows every field."""
+
+    @staticmethod
+    def _batch(with_anatomy: bool) -> SequenceBatch:
+        return SequenceBatch(
+            scans=torch.zeros(2, 1, 1, 4, 4, 4),
+            elapsed_days=torch.zeros(2, 1),
+            mask=torch.ones(2, 1, dtype=torch.bool),
+            labels=torch.ones(2, dtype=torch.long),
+            anatomy_targets=torch.zeros(2, 3) if with_anatomy else None,
+            anatomy_mask=torch.ones(2, dtype=torch.bool) if with_anatomy else None,
+            subject_ids=("A", "B"),
+        )
+
+    def test_every_tensor_field_comes_back_as_a_tensor(self) -> None:
+        moved = self._batch(with_anatomy=True).to(torch.device("cpu"))
+        for field in fields(moved):
+            value = getattr(moved, field.name)
+            assert value is not None
+            assert isinstance(value, (torch.Tensor, tuple))
+
+    def test_absent_anatomy_stays_absent(self) -> None:
+        """None means "this sequence has no FreeSurfer output" (ADR-0009). Turning it
+        into a zero tensor here would hand the auxiliary loss a plausible number."""
+        moved = self._batch(with_anatomy=False).to(torch.device("cpu"))
+        assert moved.anatomy_targets is None and moved.anatomy_mask is None
+
+    def test_subject_ids_survive_unchanged(self) -> None:
+        assert self._batch(with_anatomy=True).to(torch.device("cpu")).subject_ids == ("A", "B")
