@@ -144,6 +144,30 @@ def sample_subjects(
     for i in range(max_subjects - allocated):
         quotas[remainders[i][1]] += 1
 
+    # A class the population has but the sample does not is not a smaller cohort, it is
+    # a different study. Nothing downstream catches it: partitioning succeeds, training
+    # succeeds, and the first symptom is an undefined ROC-AUC at evaluation, long after
+    # the sample was frozen and the scans preprocessed (ADR-0010).
+    dropped = sorted(
+        (label for label, pool in by_label.items() if pool and quotas[label] == 0),
+        key=lambda lab: lab.value,
+    )
+    # No `len(by_label) > 1` guard: a population of one class takes the whole quota, so
+    # `dropped` is empty there by construction rather than by a condition no test could
+    # tell apart from its absence.
+    if dropped:
+        shares = ", ".join(
+            f"{label.name} {len(by_label[label])}/{n} ({len(by_label[label]) / n:.1%})"
+            for label in sorted(by_label, key=lambda lab: lab.value)
+        )
+        raise ValueError(
+            f"sampling {max_subjects} of {n} subjects leaves no "
+            f"{', '.join(label.name for label in dropped)} subjects at all. "
+            f"Population: {shares}. Raise max_subjects, or accept that this cohort is "
+            f"too imbalanced at this size to support a binary comparison — but do not "
+            f"discover that at evaluation."
+        )
+
     rng = random.Random(seed)
     sampled: list[SubjectId] = []
     for label in sorted(quotas, key=lambda lab: lab.value):

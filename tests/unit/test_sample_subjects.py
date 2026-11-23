@@ -6,6 +6,7 @@ of dict insertion order. A bug here silently changes the cohort every result res
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 import pytest
@@ -91,3 +92,52 @@ class TestSampleSubjects:
         labels = make_subject_labels(10, seed=11)
         with pytest.raises(ValueError, match="non-negative"):
             sample_subjects(labels, max_subjects=-1, seed=0)
+
+
+def _population(n_impaired: int, n_normal: int) -> dict[SubjectId, Label]:
+    """A cohort with an exact class composition, so the quotas are predictable."""
+    labels: dict[SubjectId, Label] = {}
+    for i in range(n_impaired):
+        labels[SubjectId(f"IMP{i:04d}")] = Label.IMPAIRED
+    for i in range(n_normal):
+        labels[SubjectId(f"NRM{i:04d}")] = Label.COGNITIVELY_NORMAL
+    return labels
+
+
+class TestTheMinorityClassSurvivesTheDraw:
+    """Largest-remainder allocation can round a rare class away entirely.
+
+    Nothing downstream catches that. Partitioning succeeds, training succeeds, and the
+    first symptom is an undefined ROC-AUC at evaluation — long after the sample was
+    frozen and the scans preprocessed. So it is refused at the draw.
+    """
+
+    def test_a_sample_that_would_drop_a_class_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="IMPAIRED"):
+            sample_subjects(_population(2, 98), max_subjects=10, seed=0)
+
+    def test_the_error_reports_the_population_it_could_not_represent(self) -> None:
+        """So the reader can tell "sample too small" from "cohort too imbalanced"."""
+        with pytest.raises(ValueError, match=re.escape("2.0%")):
+            sample_subjects(_population(2, 98), max_subjects=20, seed=0)
+
+    def test_the_adr_0010_configuration_is_unaffected(self) -> None:
+        """The realistic case must keep working: 300 subjects from ~1100 at 24%.
+
+        A guard that fired on the configuration the project actually uses would be a
+        bug, not a safeguard.
+        """
+        sampled = sample_subjects(_population(264, 836), max_subjects=300, seed=20261122)
+        counts = _labels_from_ids(_population(264, 836), sampled)
+        assert len(sampled) == 300
+        assert counts[Label.IMPAIRED] == 72
+
+    def test_a_single_class_population_is_passed_through(self) -> None:
+        """Nothing to stratify and nothing to drop. Refusing here would be refusing a
+        cohort that is merely unlabelled-for-one-class, which is a different problem."""
+        assert len(sample_subjects(_population(0, 50), max_subjects=10, seed=0)) == 10
+
+    def test_a_sample_large_enough_to_carry_the_minority_is_allowed(self) -> None:
+        """The boundary: 2 impaired in 100, drawing 50, is exactly one impaired."""
+        sampled = sample_subjects(_population(2, 98), max_subjects=50, seed=0)
+        assert _labels_from_ids(_population(2, 98), sampled)[Label.IMPAIRED] == 1
