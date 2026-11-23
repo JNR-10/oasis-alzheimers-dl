@@ -96,10 +96,15 @@ offered here is the controlled comparison — see
 ## Getting started
 
 ```bash
-make setup                   # venv + editable install + pre-commit
-export OASIS_ROOT=/path/to/local/oasis   # never inside the repo
+make setup                   # venv + editable install + git hooks
+cp .env.example .env         # then set OASIS_ROOT; never inside the repo
+make check                   # lint, typecheck, test — the gates CI runs
 make help                    # every pipeline entrypoint
 ```
+
+Working on this with us? [`CONTRIBUTING.md`](CONTRIBUTING.md) is the short path:
+branching, the checks to run before pushing, and the three controls a change must not
+weaken. Coding agents read [`AGENTS.md`](AGENTS.md).
 
 An ablation is one override:
 
