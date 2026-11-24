@@ -46,3 +46,28 @@ Leakage: that no subject's visits reach more than one partition (ADR-0001). It i
 writing before the thing it checks, and worth re-running after every transformation
 that could have broken it, because a leak inflates every reported number without
 failing anything.
+
+## Break the code to check the test
+
+A test that passes tells you nothing on its own — it may be passing for a reason that
+has nothing to do with the behaviour it names. Before trusting a test that guards
+something silent, delete the guard and confirm the test goes red. If it stays green,
+the test is decoration.
+
+Four guards in this suite were verified that way and the mutation is recorded beside
+each one: the temporal module's `src_key_padding_mask`, the `sorted()` before the split
+shuffle, subject-level resampling in the bootstrap, and the `matched == 0` check on
+checkpoint loading. Each fails silently in production — the shapes stay right and a
+plausible number still comes out — which is exactly the class of bug a passing test is
+most likely to be hiding.
+
+### Do not reduce with `.sum()`
+
+Several modules here end in a `LayerNorm`, whose output is normalised to zero mean and
+therefore **sums to zero for any input**. So `output.sum().backward()` has an exactly
+zero derivative with respect to everything upstream, and a gradient test built on it
+reports "no gradient reached" no matter what the module does.
+
+This bit once: a gradient test passed locally on a lucky random draw and failed in CI.
+Use `tests/unit/test_temporal.py::_scalarize` — a seeded random projection — or any
+reduction that is not annihilated by normalisation.

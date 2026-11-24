@@ -65,7 +65,7 @@ class Visit:
     @property
     def is_target_visit(self) -> bool:
         """Whether this visit can serve as a target visit, i.e. whether it has a label."""
-        raise NotImplementedError
+        return self.label is not None
 
 
 @dataclass(frozen=True)
@@ -76,9 +76,9 @@ class VisitSequence:
     rather than masked later — a sequence that physically cannot contain the future
     cannot leak it.
 
-    Invariants to enforce in ``__post_init__`` when this is implemented: at least one
-    visit, every visit from ``subject_id``, visits in chronological order, and the last
-    visit labeled. Each one, violated, is a silent bug rather than a crash.
+    ``__post_init__`` enforces four invariants: at least one visit, every visit from
+    ``subject_id``, visits in chronological order, and the last visit labeled. Each
+    one, unchecked, is a silent bug rather than a crash.
 
     Attributes:
         subject_id: The person. All visits share it.
@@ -88,15 +88,44 @@ class VisitSequence:
     subject_id: SubjectId
     visits: tuple[Visit, ...]
 
+    def __post_init__(self) -> None:
+        """Enforce the invariants above. Each one, unchecked, is a silent bug."""
+        if not self.visits:
+            raise ValueError(f"{self.subject_id}: a visit sequence needs at least one visit")
+
+        foreign = {v.subject_id for v in self.visits} - {self.subject_id}
+        if foreign:
+            raise ValueError(
+                f"{self.subject_id}: sequence contains visits from another subject: "
+                f"{sorted(foreign)}. Mixing subjects inside one sequence puts one "
+                f"person's data on both sides of a partition boundary (ADR-0001)."
+            )
+
+        days = [v.days_from_entry for v in self.visits]
+        if days != sorted(days):
+            raise ValueError(
+                f"{self.subject_id}: visits must be in chronological order, got "
+                f"{days}. Out of order, the last element is not the target visit and "
+                f"every elapsed-time calculation silently shifts."
+            )
+
+        if self.visits[-1].label is None:
+            raise ValueError(
+                f"{self.subject_id}: the target visit (the last one) must carry a "
+                f"label. An unlabeled visit is usable as context, never as a target."
+            )
+
     @property
     def target_visit(self) -> Visit:
         """The visit whose label is predicted."""
-        raise NotImplementedError
+        return self.visits[-1]
 
     @property
     def label(self) -> Label:
         """The sequence's label, taken from the target visit."""
-        raise NotImplementedError
+        label = self.target_visit.label
+        assert label is not None, "guaranteed by __post_init__"
+        return label
 
     @property
     def elapsed_days(self) -> tuple[int, ...]:
@@ -106,9 +135,10 @@ class VisitSequence:
         baseline keeps the quantity meaningful when sequences are truncated, and keeps
         the model's reference point the thing it is predicting (ADR-0006).
         """
-        raise NotImplementedError
+        anchor = self.target_visit.days_from_entry
+        return tuple(v.days_from_entry - anchor for v in self.visits)
 
     @property
     def is_longitudinal(self) -> bool:
         """Whether this sequence carries more than one visit."""
-        raise NotImplementedError
+        return len(self.visits) > 1

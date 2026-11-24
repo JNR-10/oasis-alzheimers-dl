@@ -1,0 +1,14 @@
+# The from-scratch convolutional reference.
+#
+# Kept because it is what the predecessor work used and what most of the AD literature
+# reports, so it is the number a reader will expect to see alongside ours. It carries no
+# pretraining and therefore no corpus overlap with our evaluation cohort (ADR-0011).
+
+name: resnet18
+
+backbone: resnet18
+embedding_dim: 512          # the backbone's native width; no projection added
+in_channels: 1
+volume_shape: ${data.volume_shape}
+pretrained: null
+checkpoint_path: null

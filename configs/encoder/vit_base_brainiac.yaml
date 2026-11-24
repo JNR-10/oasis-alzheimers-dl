@@ -1,0 +1,28 @@
+# The production encoder (ADR-0011): 3D ViT-B/16, initialized from BrainIAC's
+# self-supervised weights.
+#
+# Chosen once, here, for every arm. That is the point of this group living at the root
+# rather than inside a model config: ablation 1 varies the temporal module, so if the
+# encoder could differ between arms the comparison would be measuring two things.
+
+name: vit_base_brainiac
+
+backbone: vit_base_16
+
+# 768 is the backbone's native width, so no projection layer sits between the
+# pretrained features and the task head. Narrowing it here would put an untrained
+# bottleneck immediately after the weights we went to the trouble of pretraining.
+embedding_dim: 768
+
+in_channels: 1
+
+# Follows the data config so the two can never drift. A ViT's positional embeddings are
+# sized at construction, so a mismatch is a crash at the first batch rather than a
+# silently wrong result — but a crash on a cluster an hour into a run is still a day lost.
+volume_shape: ${data.volume_shape}
+
+pretrained: brainiac_vit_b
+
+# Weights never enter git (OASIS DUA, and these carry their own research-only licence).
+# Download from https://github.com/AIM-KannLab/BrainIAC and export the variable.
+checkpoint_path: ${oc.env:BRAINIAC_CHECKPOINT,null}

@@ -1,0 +1,13 @@
+# The same architecture as vit_base_brainiac with no pretrained weights.
+#
+# This is the control for the encoder-initialization question: run it against
+# vit_base_brainiac on arm PA alone and the difference is the value of foundation-model
+# pretraining on a cohort this size. Identical architecture, so the contrast is
+# initialization and nothing else.
+
+defaults:
+  - vit_base_brainiac
+
+name: vit_base_random
+pretrained: null
+checkpoint_path: null

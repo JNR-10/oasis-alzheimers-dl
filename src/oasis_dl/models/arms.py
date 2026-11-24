@@ -15,6 +15,50 @@ from oasis_dl.models.encoder import VisitEncoder
 from oasis_dl.models.heads import AnatomyHead, ClassificationHead
 from oasis_dl.models.temporal import TemporalAttention
 
+__all__ = ["LongitudinalModel", "ModelOutput", "SingleScanModel"]
+
+
+def _check_scans(scans: torch.Tensor) -> None:
+    """Refuse a batch of the wrong rank before it reaches a convolution."""
+    if scans.dim() != 6:
+        raise ValueError(
+            f"expected (batch, visits, channels, D, H, W) scans, got "
+            f"{tuple(scans.shape)}. Collation produces this rank even for a "
+            f"single-visit arm, so a 5-dimensional tensor means the batch was built "
+            f"somewhere else."
+        )
+
+
+def _encode_real_visits(
+    encoder: VisitEncoder, scans: torch.Tensor, mask: torch.Tensor
+) -> torch.Tensor:
+    """Encode every real visit once, and no padded ones.
+
+    Padded positions are **excluded from the encoder**, not merely masked afterwards.
+    The ResNet backbones carry BatchNorm, which takes statistics over whatever is in
+    the batch — so encoding zero-filled padding would let a sequence's prediction
+    depend on how long the longest *other* sequence in its batch happened to be. That
+    is reproducible-looking, batch-order dependent, and invisible in every shape.
+
+    Flattening batch and visit axes together is also what gives the shared encoder its
+    full gradient signal: every visit of every subject is one more training example for
+    it, not just the ones at the final position (ADR-0005).
+
+    Returns:
+        ``(batch, visits, embedding_dim)``, zero at padded positions.
+    """
+    batch, visits = scans.shape[:2]
+    flat = scans.reshape(batch * visits, *scans.shape[2:])
+    flat_mask = mask.reshape(-1)
+
+    encoded = encoder(flat[flat_mask])
+    embeddings = torch.zeros(
+        batch * visits, encoded.shape[1], dtype=encoded.dtype, device=encoded.device
+    )
+    # Out-of-place, so autograd routes gradients back through `encoded` cleanly.
+    embeddings = embeddings.index_copy(0, torch.nonzero(flat_mask).squeeze(1), encoded)
+    return embeddings.reshape(batch, visits, -1)
+
 
 class ModelOutput(nn.Module):
     """Marker base so every arm returns the same shape of result."""
@@ -34,8 +78,15 @@ class SingleScanModel(nn.Module):
         self.head = head
 
     def forward(self, batch: SequenceBatch) -> dict[str, torch.Tensor]:
-        """Returns ``{"logits": (batch,)}``."""
-        raise NotImplementedError
+        """Returns ``{"logits": (batch,)}``.
+
+        Reads ``scans[:, -1]`` and nothing else. Collation left-pads precisely so the
+        final position is the target visit for every sequence, so this arm sees the same
+        visit for every subject while receiving the identical batch arm PA receives.
+        """
+        _check_scans(batch.scans)
+        representation = self.encoder(batch.scans[:, -1])
+        return {"logits": self.head(representation)}
 
 
 class LongitudinalModel(nn.Module):
@@ -65,4 +116,14 @@ class LongitudinalModel(nn.Module):
         The encoder is applied per visit by flattening the batch and visit axes
         together, which is what gives the shared encoder its full gradient signal.
         """
-        raise NotImplementedError
+        _check_scans(batch.scans)
+        embeddings = _encode_real_visits(self.encoder, batch.scans, batch.mask)
+        representation = self.temporal(embeddings, batch.elapsed_days, batch.mask)
+
+        outputs = {"logits": self.head(representation)}
+        # Training only (ADR-0007). Gated on `self.training` rather than on a flag the
+        # caller passes, so arms PA and PB cannot differ at inference even by mistake:
+        # in eval mode the head is not called and the key is simply absent.
+        if self.anatomy_head is not None and self.training:
+            outputs["anatomy"] = self.anatomy_head(representation)
+        return outputs

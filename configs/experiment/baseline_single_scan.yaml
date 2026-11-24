@@ -2,7 +2,7 @@
 # B1 — the transparent single-scan baseline, and the control arm of ablation 1.
 
 defaults:
-  - override /model: resnet3d
+  - override /model: shared_encoder
 
 experiment:
   name: baseline_single_scan

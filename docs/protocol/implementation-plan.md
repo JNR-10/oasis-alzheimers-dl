@@ -131,3 +131,67 @@ A cohort that is overwhelmingly single-visit cannot support a longitudinal claim
 regardless of architecture. If that is what the data says, the team needs to know at Gate
 2 and not in week 5, and the honest response is to report it as a finding about cohort
 feasibility rather than to train the arms anyway.
+
+---
+
+## Amendment, 2026-11-22 — the encoder is chosen, and was nearly chosen badly
+
+**The question.** While implementing the visit encoder (#5), the configured backbone
+was a randomly initialized `resnet18` at 33.2M parameters — heavy for a cohort of 300
+subjects, which is roughly 450 training sequences once built (#14 reports the real
+count; `docs/data/cohort-definition.md` holds `_tbd_` until then). `resnet10` is under
+half the size. Whichever is chosen must be identical across every arm, or ablation 1
+confounds architecture with capacity.
+
+**The answer** is [ADR-0011](../adr/0011-pretrained-vit-encoder.md), and it took
+neither option. Both were randomly initialized, so both traded capacity against
+generalization. The configured encoder is now a **3D ViT-B/16 initialized from
+BrainIAC's self-supervised weights** (88.3M parameters), which sidesteps the trade: the
+representation comes from ~32k brain MRIs rather than from 450 training sequences.
+`resnet18` is kept as the from-scratch reference and still runs.
+
+Three consequences for the plan as written:
+
+- **The encoder is selected once at the config root** (`configs/encoder/`), not inside
+  each model config. The requirement that it be identical across every arm is enforced
+  by `tests/unit/test_configs.py` rather than by discipline.
+- **BrainIAC's pretraining corpus includes OASIS-3 and OASIS-2.** The reasoning for
+  proceeding anyway, and the alternatives rejected, are in ADR-0011. The short version:
+  it is self-supervised, so no label leaks, and it is constant across arms, so it
+  cancels in the contrasts. Absolute numbers are not comparable with from-scratch
+  literature and the report must say so.
+- **Preprocessing now has a fixed target.** BrainIAC's template and a resize to 96³,
+  rather than a free choice of 2 mm resampling — see the dated amendment in
+  [`preprocessing.md`](preprocessing.md). This lands on [#15] and constrains, but does
+  not remove, the registration question in [#16].
+
+### Where the numbers live
+
+Parameter counts follow from the architecture, so they can be stated — but they are
+*checked*, not trusted: `tests/unit/test_configs.py` reads ADR-0011's table and measures
+each encoder as configured. That test exists because the first version of that table
+was typed, and two of its four figures were measured at the wrong embedding width and
+input shape. Correcting them then exposed a third problem: MONAI 1.4's `ViT` allocates a
+cross-attention layer in every block and never runs it — 28.3M of ViT-B's 116.7M
+parameters. The encoder now removes those after construction (the forward pass is
+bit-identical, and a test pins that), which brings ViT-B to 88.3M: the figure BrainIAC
+publishes for its own encoder, and the architecture its checkpoint actually fits.
+
+The memory and throughput footprint is machine-specific, so it is **not** reproduced
+here. It is measured by `tests/unit/test_encoder.py::TestMemoryFootprint` and
+regenerated with `make test-all`; it is excluded from CI because 3D volumes at the
+production shape take minutes per backbone.
+
+### One new cost, and where it lands
+
+`vit_base_16` at 96³ is over a second per forward pass on a laptop CPU, so the real arms
+([#18], [#19], [#20]) need a GPU to be worth starting. `configs/encoder/vit_tiny_smoke.yaml`
+is the same code path at 2.2M parameters, for proving a training loop runs end to end on
+any machine before it is queued on real hardware. No reported result comes from it, and
+the encoder name is carried into every run record so the two cannot be confused.
+
+[#15]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/15
+[#16]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/16
+[#18]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/18
+[#19]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/19
+[#20]: https://github.com/JNR-10/oasis-alzheimers-dl/issues/20
