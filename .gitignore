@@ -122,3 +122,10 @@ Thumbs.db
 *~
 .rocketride/
 .env
+
+# ---------------------------------------------------------------------------
+# Local scratch for OASIS data that must never be committed.
+# A directory rule, not a glob: `donotcheckin/**` leaves the directory itself
+# untracked-but-visible, and anything mistyped silently matches nothing.
+# ---------------------------------------------------------------------------
+donotcheckin/

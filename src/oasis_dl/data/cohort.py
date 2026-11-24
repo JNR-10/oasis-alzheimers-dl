@@ -10,6 +10,8 @@ fallback of ADR-0003 is a different implementation rather than a rewrite.
 
 from __future__ import annotations
 
+import random
+from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,10 +111,76 @@ def sample_subjects(
     Raises:
         ValueError: If ``max_subjects`` is negative or ``subject_labels`` is empty.
     """
-    raise NotImplementedError(
-        "Sampling is drawn once and frozen (ADR-0010). Raising max_subjects later "
-        "produces a different cohort, not a bigger one."
+    if not subject_labels:
+        raise ValueError("subject_labels is empty — nothing to sample")
+    if max_subjects is not None and max_subjects < 0:
+        raise ValueError(f"max_subjects must be non-negative, got {max_subjects}")
+
+    # Sort first so dict insertion order cannot change the draw (ADR-0010 / ADR-0001).
+    candidates = sorted(subject_labels)
+    n = len(candidates)
+    if max_subjects is None or max_subjects >= n:
+        return candidates
+
+    if max_subjects == 0:
+        return []
+
+    by_label: dict[Label, list[SubjectId]] = defaultdict(list)
+    for subject_id in candidates:
+        by_label[subject_labels[subject_id]].append(subject_id)
+
+    # Largest-remainder allocation keeps the sample's label ratio near the population's
+    # without overshooting a class that has few subjects.
+    quotas: dict[Label, int] = {}
+    remainders: list[tuple[float, Label]] = []
+    allocated = 0
+    for label in sorted(by_label, key=lambda lab: lab.value):
+        exact = max_subjects * len(by_label[label]) / n
+        floor = int(exact)
+        quotas[label] = floor
+        allocated += floor
+        remainders.append((exact - floor, label))
+    remainders.sort(key=lambda item: (-item[0], item[1].value))
+    for i in range(max_subjects - allocated):
+        quotas[remainders[i][1]] += 1
+
+    # A class the population has but the sample does not is not a smaller cohort, it is
+    # a different study. Nothing downstream catches it: partitioning succeeds, training
+    # succeeds, and the first symptom is an undefined ROC-AUC at evaluation, long after
+    # the sample was frozen and the scans preprocessed (ADR-0010).
+    dropped = sorted(
+        (label for label, pool in by_label.items() if pool and quotas[label] == 0),
+        key=lambda lab: lab.value,
     )
+    # No `len(by_label) > 1` guard: a population of one class takes the whole quota, so
+    # `dropped` is empty there by construction rather than by a condition no test could
+    # tell apart from its absence.
+    if dropped:
+        shares = ", ".join(
+            f"{label.name} {len(by_label[label])}/{n} ({len(by_label[label]) / n:.1%})"
+            for label in sorted(by_label, key=lambda lab: lab.value)
+        )
+        raise ValueError(
+            f"sampling {max_subjects} of {n} subjects leaves no "
+            f"{', '.join(label.name for label in dropped)} subjects at all. "
+            f"Population: {shares}. Raise max_subjects, or accept that this cohort is "
+            f"too imbalanced at this size to support a binary comparison — but do not "
+            f"discover that at evaluation."
+        )
+
+    rng = random.Random(seed)
+    sampled: list[SubjectId] = []
+    for label in sorted(quotas, key=lambda lab: lab.value):
+        pool = by_label[label]
+        k = quotas[label]
+        if k >= len(pool):
+            sampled.extend(pool)
+            continue
+        draw = pool.copy()
+        rng.shuffle(draw)
+        sampled.extend(draw[:k])
+
+    return sorted(sampled)
 
 
 def build_visits(
@@ -152,16 +220,38 @@ def build_sequences(
         visits: All visits in the cohort, in any order.
         max_length: Keep at most this many visits, counting back from the target.
             None keeps all of them. Bounds memory for subjects with long histories.
+            ADR-0010 sets this to 3 for the production cohort.
 
     Returns:
         One sequence per labeled visit, so a subject with three labeled visits
         contributes three correlated sequences. That correlation is handled by sampling
         or loss weighting, never by splitting the subject across partitions (ADR-0001).
+        Sequences are ordered by ``(subject_id, target days_from_entry)`` so a caller
+        cannot accidentally depend on the input iteration order.
     """
-    raise NotImplementedError(
-        "Blocked on build_visits. The grouping logic itself is dataset-independent and "
-        "can be written as soon as the Visit stream is real."
-    )
+    if max_length is not None and max_length < 1:
+        raise ValueError(f"max_length must be at least 1, got {max_length}")
+
+    by_subject: dict[SubjectId, list[Visit]] = defaultdict(list)
+    for visit in visits:
+        by_subject[visit.subject_id].append(visit)
+
+    sequences: list[VisitSequence] = []
+    for subject_id in sorted(by_subject):
+        # Secondary key on session_id so equal days_from_entry stay deterministic.
+        ordered = sorted(
+            by_subject[subject_id],
+            key=lambda v: (v.days_from_entry, str(v.session_id)),
+        )
+        for index, target in enumerate(ordered):
+            if target.label is None:
+                continue
+            history = ordered[: index + 1]
+            if max_length is not None:
+                history = history[-max_length:]
+            sequences.append(VisitSequence(subject_id=subject_id, visits=tuple(history)))
+
+    return sequences
 
 
 def summarize_cohort(sequences: Sequence[VisitSequence]) -> pd.DataFrame:
