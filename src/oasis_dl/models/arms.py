@@ -81,7 +81,7 @@ class SingleScanModel(nn.Module):
         """Returns ``{"logits": (batch,)}``.
 
         Reads ``scans[:, -1]`` and nothing else. Collation left-pads precisely so the
-        final position is the target visit for every sample, so this arm sees the same
+        final position is the target visit for every sequence, so this arm sees the same
         visit for every subject while receiving the identical batch arm PA receives.
         """
         _check_scans(batch.scans)

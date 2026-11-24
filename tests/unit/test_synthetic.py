@@ -187,6 +187,10 @@ class TestProductionShapePreset:
         )
 
 
+SANCTIONED_INPUTS = frozenset({"days_from_entry"})
+"""Readable columns a model is meant to use, so allowed to carry signal (ADR-0006)."""
+
+
 class TestCohortSourceProtocol:
     def test_it_satisfies_the_cohort_source_protocol(self, cohort: SyntheticCohort) -> None:
         """The point of the generator: downstream code cannot tell it from OASIS-3."""
@@ -213,6 +217,14 @@ class TestCohortSourceProtocol:
         catches the generator handing out its own ``atrophy`` latent — the quantity
         the label is a threshold of, i.e. this cohort's CDR — which the mmse/cdr
         check sails straight past.
+
+        Two bars, because there are two kinds of column. ``days_from_entry`` is an
+        input the model is *meant* to read (ADR-0006), and since atrophy accumulates
+        with time it genuinely predicts the label — its AUC ranges 0.38 to 0.77 across
+        seeds. Holding it to the chance band made this test fail on ~3% of seeds
+        while catching nothing, because the leak it exists for scores 1.00. So
+        sanctioned inputs are held to "not near-deterministic" instead, which still
+        catches a leak routed through time.
         """
         import pandas as pd
         from sklearn.metrics import roc_auc_score
@@ -227,11 +239,21 @@ class TestCohortSourceProtocol:
             if values.isna().all():
                 continue
             auc = roc_auc_score(labeled["label"], values)
-            assert 0.25 < auc < 0.75, (
-                f"column {column!r} separates the label at AUC {auc:.2f}. Nothing a "
-                f"model can read may be a near-deterministic function of the label "
-                f"(ADR-0002)."
-            )
+            if column in SANCTIONED_INPUTS:
+                # A column the model is *meant* to read may carry signal — that is the
+                # point of reading it. It must still not be a near-deterministic function
+                # of the label, or the "signal" is the answer.
+                assert 0.05 < auc < 0.95, (
+                    f"sanctioned input {column!r} separates the label at AUC {auc:.2f}: "
+                    f"near-deterministic, so it is leaking the label rather than carrying "
+                    f"signal about it."
+                )
+            else:
+                assert 0.25 < auc < 0.75, (
+                    f"column {column!r} separates the label at AUC {auc:.2f}. Nothing a "
+                    f"model can read may be a near-deterministic function of the label "
+                    f"(ADR-0002)."
+                )
 
     def test_the_latent_stays_reachable_for_debugging_the_generator(
         self, cohort: SyntheticCohort

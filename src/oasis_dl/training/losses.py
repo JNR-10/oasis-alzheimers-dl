@@ -9,9 +9,13 @@ whether the auxiliary objective helps.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import torch
 from torch import nn
 from torch.nn import functional
+
+from oasis_dl.types import VisitSequence
 
 __all__ = ["AnatomyTargetScaler", "CombinedObjective"]
 
@@ -50,6 +54,36 @@ class AnatomyTargetScaler:
         # target carries no signal anyway, so it is centred and left unscaled.
         self.scale = torch.where(spread > 0, spread, torch.ones_like(spread))
         return self
+
+    @classmethod
+    def fit_from_sequences(cls, sequences: Iterable[VisitSequence]) -> AnatomyTargetScaler:
+        """Fit from the target visits of a partition's sequences.
+
+        The form the training loop uses, so the loop can fit the scaler from its own
+        training dataset rather than accept one built elsewhere. Columns follow the
+        sorted target names, which is the order collation stacks them in — a scaler
+        whose columns disagreed with the batch would standardize each target with
+        another target's statistics and nothing would raise.
+
+        Sequences without targets are skipped: not every session ships FreeSurfer
+        output (ADR-0009).
+
+        Raises:
+            ValueError: If no sequence carries targets, or they disagree on which.
+        """
+        rows = [
+            sequence.target_visit.anatomy_targets
+            for sequence in sequences
+            if sequence.target_visit.anatomy_targets
+        ]
+        if not rows:
+            raise ValueError("no training sequence carries anatomy targets to fit on")
+        key_sets = {tuple(sorted(row)) for row in rows}
+        if len(key_sets) > 1:
+            raise ValueError(f"training sequences carry different anatomy targets: {key_sets}")
+        keys = sorted(rows[0])
+        values = torch.tensor([[row[key] for key in keys] for row in rows], dtype=torch.float32)
+        return cls().fit(values)
 
     def _fitted(self, targets: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if self.mean is None or self.scale is None:

@@ -122,13 +122,13 @@ class VisitSequenceDataset(Dataset[LoadedSequence]):
         sequences: Belonging to exactly one partition. Passing sequences from more
             than one partition is the mistake ADR-0001 exists to prevent, so callers
             build one dataset per partition.
-        transform: Applied per scan. For a longitudinal sample the *same* spatial
+        transform: Applied per scan. For a longitudinal sequence the *same* spatial
             transform is applied across a subject's visits — independent augmentation
             injects apparent anatomical change between visits, which is precisely the
             signal the temporal module reads (see docs/protocol/preprocessing.md).
         load_anatomy_targets: Training only. Test sequences need no targets, so a
             target extraction that failed on a test subject costs nothing.
-        seed: Base for the per-sample transform draw. Recorded so an augmented epoch
+        seed: Base for the per-sequence transform draw. Recorded so an augmented epoch
             is reproducible (ADR-0008). Call :meth:`set_epoch` each epoch, or every
             epoch draws the identical augmentation and it degenerates into fixed
             preprocessing.
@@ -151,7 +151,7 @@ class VisitSequenceDataset(Dataset[LoadedSequence]):
     def set_epoch(self, epoch: int) -> None:
         """Advance the augmentation draw.
 
-        Without this the per-sample seed is fixed, so a sample receives the same
+        Without this the per-sequence seed is fixed, so a sequence receives the same
         augmentation at every epoch and the augmentation stops being augmentation.
         """
         self.epoch = epoch
@@ -162,10 +162,10 @@ class VisitSequenceDataset(Dataset[LoadedSequence]):
     def __getitem__(self, index: int) -> LoadedSequence:
         sequence = self.sequences[index]
 
-        # One draw per sample, reused for every visit of that subject. Drawing
+        # One draw per sequence, reused for every visit of that subject. Drawing
         # independently per visit would manufacture anatomical change between visits —
         # the exact signal the temporal module is asked to detect.
-        sample_seed = self.seed + self.epoch * 1_000_003 + index
+        sequence_seed = self.seed + self.epoch * 1_000_003 + index
 
         scans = []
         for visit in sequence.visits:
@@ -177,7 +177,7 @@ class VisitSequenceDataset(Dataset[LoadedSequence]):
                 # in a way nothing would report.
                 state = torch.get_rng_state()
                 try:
-                    torch.manual_seed(sample_seed)
+                    torch.manual_seed(sequence_seed)
                     scan = self.transform(scan)
                 finally:
                     torch.set_rng_state(state)
@@ -271,7 +271,7 @@ def collate_sequences(batch: Sequence[LoadedSequence]) -> SequenceBatch:
 
     Right-padding would put the target visit at a different index for every sequence.
     **Left-pad instead**, so the target visit is always last and a model that reads the
-    final position reads the right thing for every sample in the batch.
+    final position reads the right thing for every sequence in the batch.
     """
     _empty_batch_guard(batch)
 

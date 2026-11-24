@@ -89,13 +89,21 @@ class TestSharedWeights:
         assert before == after
 
     def test_gradients_reach_the_backbone(self) -> None:
-        """Every visit must be training signal for the encoder, not just the last."""
+        """Every visit must be training signal for the encoder, not just the last.
+
+        Checked on ``encoder.body`` — the backbone itself — rather than on every
+        parameter. A 512-wide ResNet asked for 32 dimensions gets a projection layer,
+        and that projection receives a gradient even when the backbone receives none,
+        so "any parameter got a gradient" passed with the backbone detached entirely.
+        """
         encoder = VisitEncoder(embedding_dim=32)
-        out = encoder(torch.randn(2, 1, 16, 16, 16))
-        out.sum().backward()
-        grads = [p.grad for p in encoder.parameters() if p.requires_grad and p.grad is not None]
-        assert grads, "no parameter received a gradient"
-        assert any(g.abs().sum() > 0 for g in grads)
+        _scalarize(encoder(torch.randn(2, 1, 16, 16, 16))).backward()
+        starved = [
+            name
+            for name, parameter in encoder.body.named_parameters()
+            if parameter.requires_grad and (parameter.grad is None or not parameter.grad.any())
+        ]
+        assert not starved, f"backbone parameters received no gradient: {starved[:3]}"
 
 
 class TestDeterminism:
@@ -137,7 +145,7 @@ class TestMemoryFootprint:
         params = sum(p.numel() for p in encoder.parameters())
         param_mb = params * 4 / 1024**2
 
-        encoder(torch.randn(2, 1, 96, 96, 96)).sum().backward()
+        _scalarize(encoder(torch.randn(2, 1, 96, 96, 96))).backward()
         peak = peak_rss_mb()
 
         with capsys.disabled():
@@ -171,7 +179,7 @@ TINY = (16, 16, 16)
 
 
 def _tiny_vit(**kwargs: object) -> VisitEncoder:
-    """A ViT at 1/47th of ViT-B, exercising the identical code path.
+    """A small ViT exercising the identical code path to ViT-B.
 
     Production is ``vit_base_16`` at 96^3 (ADR-0011) and takes well over a second per
     forward pass on CPU. Tests that used it would stop being run.
@@ -210,10 +218,52 @@ class TestVisionTransformerBackbone:
             VisitEncoder(backbone="vit_tiny_8", volume_shape=(20, 20, 20))
 
     def test_gradients_reach_the_transformer(self) -> None:
+        """On ``encoder.body``, for the same reason as the ResNet test: a 192-wide ViT
+        asked for 32 dimensions gets a projection, which takes a gradient even when the
+        transformer takes none."""
         encoder = _tiny_vit(embedding_dim=32)
         _scalarize(encoder(torch.randn(2, 1, *TINY))).backward()
-        grads = [p.grad for p in encoder.parameters() if p.grad is not None]
-        assert grads and any(g.abs().sum() > 0 for g in grads)
+        starved = [
+            name
+            for name, parameter in encoder.body.named_parameters()
+            if parameter.requires_grad and (parameter.grad is None or not parameter.grad.any())
+        ]
+        assert not starved, f"transformer parameters received no gradient: {starved[:3]}"
+
+
+class TestUnusedCrossAttentionIsRemoved:
+    """MONAI 1.4 allocates cross-attention in every ViT block and never runs it.
+
+    Found by making the gradient test above check the backbone rather than "any
+    parameter": 24% of ViT-B never received a gradient. Removing those layers is only
+    acceptable if it changes nothing the model computes, so that is what is pinned.
+    """
+
+    def test_removal_leaves_the_forward_pass_bit_identical(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from oasis_dl.models import encoder as encoder_module
+
+        def build() -> VisitEncoder:
+            torch.manual_seed(0)
+            return _tiny_vit(embedding_dim=192).eval()
+
+        pruned = build()
+        monkeypatch.setattr(encoder_module, "_drop_unused_cross_attention", lambda vit: None)
+        full = build()
+
+        volume = torch.randn(3, 1, *TINY, generator=torch.Generator().manual_seed(1))
+        with torch.no_grad():
+            assert torch.equal(pruned(volume), full(volume))
+        assert sum(p.numel() for p in pruned.parameters()) < sum(
+            p.numel() for p in full.parameters()
+        )
+
+    def test_no_block_keeps_an_unused_cross_attention(self) -> None:
+        for block in _tiny_vit(embedding_dim=32).body.vit.blocks:
+            assert not block.with_cross_attention
+            assert not hasattr(block, "cross_attn")
+            assert not hasattr(block, "norm_cross_attn")
 
 
 class TestPretrainedCheckpoints:

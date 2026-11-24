@@ -125,7 +125,30 @@ def _build_vit(
         classification=False,
         spatial_dims=3,
     )
+    _drop_unused_cross_attention(module)
     return _PooledViT(module), hidden
+
+
+def _drop_unused_cross_attention(vit: nn.Module) -> None:
+    """Remove the cross-attention layers MONAI allocates and never runs.
+
+    MONAI 1.4's ``TransformerBlock`` builds ``cross_attn`` and ``norm_cross_attn``
+    unconditionally, and only *uses* them when ``with_cross_attention`` is set — which
+    ``ViT`` neither sets nor exposes. In ViT-B that is 28.3M of 116.7M parameters that
+    never receive a gradient, inflate the parameter count every document quotes, and
+    take optimizer state on the GPU for nothing.
+
+    Removed after construction rather than avoided during it, so the random draws for
+    every other weight are unchanged and the forward pass is bit-identical — which a
+    test pins. Guarded per block, so a future MONAI that does enable cross-attention
+    keeps it.
+    """
+    for block in getattr(vit, "blocks", ()):
+        if getattr(block, "with_cross_attention", True):
+            continue
+        for name in ("cross_attn", "norm_cross_attn"):
+            if hasattr(block, name):
+                delattr(block, name)
 
 
 @dataclass(frozen=True)
@@ -159,7 +182,9 @@ _BACKBONES: dict[str, _BackboneSpec] = {
     "vit_base_16": _BackboneSpec(
         lambda c, d, s: _build_vit(16, 768, 12, 12, c, d, s), 16, fixed_input=True
     ),
-    # Same code path at 1/47th the size, for tests and for any machine without a GPU.
+    # Same code path at about 1/40th the size at 96^3, for tests and for any machine
+    # without a GPU. The ratio is shape-dependent — positional embeddings grow with the
+    # token count — which is how an earlier figure measured at 32^3 came out wrong.
     # Production numbers never come from this one.
     "vit_tiny_8": _BackboneSpec(
         lambda c, d, s: _build_vit(8, 192, 4, 3, c, d, s), 8, fixed_input=True

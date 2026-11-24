@@ -17,7 +17,11 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from oasis_dl.evaluation.metrics import ClassificationMetrics, compute_metrics
+from oasis_dl.evaluation.metrics import (
+    ClassificationMetrics,
+    compute_metrics,
+    rows_by_subject,
+)
 
 __all__ = ["DEFAULT_RESAMPLES", "ConfidenceInterval", "bootstrap_metrics"]
 
@@ -109,10 +113,7 @@ def bootstrap_metrics(
 
     # Rows grouped by subject, so a drawn subject brings all of their visits. Sorted,
     # so the draw depends on the seed and not on the order rows arrived in.
-    rows: dict[str, list[int]] = {}
-    for index, subject in enumerate(subject_ids):
-        rows.setdefault(str(subject), []).append(index)
-    clusters = [np.array(rows[subject], dtype=int) for subject in sorted(rows)]
+    clusters = [np.array(rows, dtype=int) for rows in rows_by_subject(subject_ids).values()]
 
     point = compute_metrics(labels, scores, threshold=threshold).as_dict()
     draws: dict[str, list[float]] = {name: [] for name in metrics}

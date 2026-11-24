@@ -11,11 +11,9 @@ invites it into a table where it would mislead.
 
 from __future__ import annotations
 
-import csv
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -24,8 +22,8 @@ __all__ = [
     "ClassificationMetrics",
     "aggregate_by_subject",
     "compute_metrics",
+    "rows_by_subject",
     "select_threshold",
-    "write_metrics_table",
 ]
 
 
@@ -221,26 +219,22 @@ _OBJECTIVES = frozenset({"youden", "sensitivity_first"})
 _SENSITIVITY_FLOOR = 0.90
 
 
-def write_metrics_table(rows: Mapping[str, ClassificationMetrics], path: Path) -> Path:
-    """Write one row per arm, generated from recorded metrics.
+def rows_by_subject(subject_ids: Sequence[str]) -> dict[str, list[int]]:
+    """Group row indices by subject, in sorted subject order.
 
-    ``AGENTS.md``: results tables are generated from recorded runs, never typed. This is
-    the per-run writer — one table for one evaluation. Aggregating across seeds and arms
-    into the report's tables is #12 and builds on this rather than re-deriving it.
+    The unit both subject-level aggregation and the subject-level bootstrap are built
+    on, so it is defined once. Two copies of "which rows belong to which subject" is the
+    one duplication this module cannot afford: if they ever disagreed, the bootstrap
+    would resample a different grouping from the one the metrics were aggregated over,
+    and both would still produce plausible numbers.
 
-    Returns:
-        The path written, so a caller can record it with the run.
+    Sorted, so any consumer that iterates it gets an order fixed by the subjects rather
+    than by the order rows happened to arrive in.
     """
-    if not rows:
-        raise ValueError("no metrics to write; an empty table is worse than no table")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    columns = ["arm", *next(iter(rows.values())).as_dict()]
-    with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=columns)
-        writer.writeheader()
-        for arm, metrics in rows.items():
-            writer.writerow({"arm": arm, **metrics.as_dict()})
-    return path
+    rows: dict[str, list[int]] = {}
+    for index, subject in enumerate(subject_ids):
+        rows.setdefault(str(subject), []).append(index)
+    return {subject: rows[subject] for subject in sorted(rows)}
 
 
 def aggregate_by_subject(
@@ -270,11 +264,8 @@ def aggregate_by_subject(
             f"prediction must name the subject it came from"
         )
 
-    rows: dict[str, list[int]] = {}
-    for index, subject in enumerate(subject_ids):
-        rows.setdefault(str(subject), []).append(index)
-
-    ordered = sorted(rows)
+    rows = rows_by_subject(subject_ids)
+    ordered = list(rows)
     subject_labels = np.array([int(labels[rows[subject]].max()) for subject in ordered], dtype=int)
     subject_scores = np.array(
         [float(scores[rows[subject]].mean()) for subject in ordered], dtype=float

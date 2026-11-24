@@ -194,7 +194,7 @@ class TemporalAttention(nn.Module):
         encoded = self.blocks(combined, src_key_padding_mask=~mask)
 
         # The final position. `collate_sequences` left-pads precisely so that this is
-        # the target visit for every sample in the batch; right-padding would make this
+        # the target visit for every sequence in the batch; right-padding would make this
         # line read padding for most of them while still producing a plausible number.
         last: torch.Tensor = encoded[:, -1, :]
         return last

@@ -8,7 +8,7 @@ real cohort is frozen (#14) the work is swapping a source, not starting a pipeli
 distinguish a training loop that silently fails to optimise from one that works — both
 land at chance. The signal is a crude atrophy proxy: impaired subjects lose intensity
 in a central region, and the loss deepens with elapsed time, so a longitudinal model
-has a trajectory to read and a single-scan model has only a level. Set
+has a rate of change to read and a single-scan model has only a level. Set
 ``signal_strength=0`` to get the noise cohort back, which is how you check a model
 cannot cheat.
 
@@ -46,8 +46,10 @@ class SyntheticCohortSpec:
         min_visits: Fewest visits a subject may have. 1 keeps single-visit subjects in
             the cohort, because the real one will have them.
         max_visits: Most visits a subject may have.
-        impaired_fraction: Share of subjects seeded as impaired. The observed
-            *visit-level* share lands slightly higher, because a few subjects convert.
+        impaired_fraction: Share of subjects seeded as impaired — exactly
+            ``round(n_subjects * impaired_fraction)`` of them, not a per-subject draw.
+            The observed *visit-level* share lands slightly higher, because a few
+            subjects convert.
             Defaults near the predecessor's 76/24 split.
         unlabeled_fraction: Share of sessions with no resolvable label, standing in for
             imaging sessions with no clinical assessment inside the admissible gap
@@ -125,7 +127,7 @@ class SyntheticCohortSpec:
 
 @dataclass
 class _SubjectPlan:
-    """The latent trajectory a subject's visits are drawn from."""
+    """The latent atrophy curve a subject's visits are drawn from."""
 
     subject_id: SubjectId
     baseline_atrophy: float
@@ -216,17 +218,26 @@ class SyntheticCohort:
         return drawn
 
     def _plan_subjects(self, rng: np.random.Generator) -> list[_SubjectPlan]:
-        """Draw each subject's trajectory and visit days.
+        """Draw each subject's latent atrophy curve and visit days.
 
         Impaired subjects start already atrophied; normal subjects start low but may
         progress fast enough to cross the threshold mid-sequence. That overlap is
         deliberate — a cohort where the two groups never meet is separable by a
         threshold and teaches the pipeline nothing about the hard cases.
         """
+        # An exact count, not a per-subject coin flip. `impaired_fraction` is documented
+        # as a *share*, and a Bernoulli draw does not deliver one at the sizes tests use:
+        # 16 subjects at 35% comes back with no impaired subject at all about once in a
+        # thousand seeds, and every pipeline test downstream then fails on a class that
+        # was never generated rather than on the code under test.
+        n_impaired = round(self.spec.n_subjects * self.spec.impaired_fraction)
+        seeded_impaired = [True] * n_impaired + [False] * (self.spec.n_subjects - n_impaired)
+        rng.shuffle(seeded_impaired)
+
         plans: list[_SubjectPlan] = []
         for index in range(self.spec.n_subjects):
             subject_id = SubjectId(f"SYN{index:04d}")
-            if rng.random() < self.spec.impaired_fraction:
+            if seeded_impaired[index]:
                 baseline = float(rng.uniform(0.55, 0.95))
                 rate = float(rng.uniform(0.02, 0.08))
             else:

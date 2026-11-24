@@ -139,3 +139,52 @@ class TestEncoderWiring:
 
     def test_the_default_encoder_is_the_one_the_adr_chose(self) -> None:
         assert _encoder(_compose())["backbone"] == "vit_base_16"
+
+
+ADR_0011 = Path(__file__).resolve().parents[2] / "docs" / "adr" / "0011-pretrained-vit-encoder.md"
+
+
+def _documented_parameter_counts() -> dict[str, float]:
+    """The parameter counts ADR-0011's table states, in millions, keyed by encoder."""
+    import re
+
+    rows = re.findall(r"^\| `(\w+)`[^|]*\| ([\d.]+)M \|", ADR_0011.read_text(), re.MULTILINE)
+    return {name: float(millions) for name, millions in rows}
+
+
+class TestTheDocumentedParameterCountsAreMeasured:
+    """ADR-0011 says its parameter counts are "measured, not typed". This makes it true.
+
+    They were typed once, and two came out wrong: measured at a different
+    ``embedding_dim`` and a different input shape from the configs they described. A
+    plausible-looking number in a research document is worse than a blank (AGENTS.md),
+    and nothing failed — so this test reads the ADR's table and measures each encoder
+    *as configured*, the condition that was skipped.
+    """
+
+    def test_the_table_is_readable(self) -> None:
+        """Otherwise the comparison below would pass vacuously on an empty table."""
+        assert set(_documented_parameter_counts()) == {
+            "vit_base_brainiac",
+            "vit_base_random",
+            "resnet18",
+            "vit_tiny_smoke",
+        }
+
+    def test_every_documented_count_matches_the_configured_encoder(self) -> None:
+        from oasis_dl.models.encoder import VisitEncoder
+
+        measured: dict[tuple[str, int, tuple[int, ...]], float] = {}
+        for name, documented in _documented_parameter_counts().items():
+            encoder = _encoder(_compose(f"encoder={name}"))
+            shape = tuple(int(n) for n in encoder["volume_shape"])  # type: ignore[union-attr]
+            key = (str(encoder["backbone"]), int(encoder["embedding_dim"]), shape)  # type: ignore[call-overload]
+            if key not in measured:
+                # Random init only: a parameter count does not depend on the weights,
+                # and the checkpoint is never committed.
+                built = VisitEncoder(backbone=key[0], embedding_dim=key[1], volume_shape=shape)  # type: ignore[arg-type]
+                measured[key] = sum(p.numel() for p in built.parameters()) / 1e6
+            assert round(measured[key], 1) == documented, (
+                f"ADR-0011 says {name} is {documented}M; as configured it is "
+                f"{measured[key]:.2f}M. Update the table, not this test."
+            )

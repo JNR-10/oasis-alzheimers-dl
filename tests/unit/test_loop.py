@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 import torch
@@ -28,15 +30,24 @@ from torch.utils.data import DataLoader, Dataset
 
 from oasis_dl.data.dataset import SequenceBatch
 from oasis_dl.training.loop import TrainingConfig, evaluate_split, pos_weight_from_labels, train
-from oasis_dl.training.losses import AnatomyTargetScaler, CombinedObjective
+from oasis_dl.training.losses import CombinedObjective
+from oasis_dl.types import Label, SessionId, SubjectId, Visit, VisitSequence
 from oasis_dl.utils.provenance import RunProvenance
 
 
 class _Batches(Dataset[SequenceBatch]):
-    """A dataset whose items are already collated batches."""
+    """A dataset whose items are already collated batches.
 
-    def __init__(self, batches: list[SequenceBatch]) -> None:
+    ``sequences`` stands in for the records a real ``VisitSequenceDataset`` exposes, so
+    the loop's scaler fit can be pointed at statistics that differ from the batches.
+    """
+
+    def __init__(
+        self, batches: list[SequenceBatch], sequences: list[VisitSequence] | None = None
+    ) -> None:
         self.batches = batches
+        if sequences is not None:
+            self.sequences = sequences
 
     def __len__(self) -> int:
         return len(self.batches)
@@ -45,8 +56,10 @@ class _Batches(Dataset[SequenceBatch]):
         return self.batches[index]
 
 
-def _loader(batches: list[SequenceBatch]) -> DataLoader[SequenceBatch]:
-    return DataLoader(_Batches(batches), batch_size=None, shuffle=False)
+def _loader(
+    batches: list[SequenceBatch], sequences: list[VisitSequence] | None = None
+) -> DataLoader[SequenceBatch]:
+    return DataLoader(_Batches(batches, sequences), batch_size=None, shuffle=False)
 
 
 def _batch(labels: list[int], subject_prefix: str = "S") -> SequenceBatch:
@@ -263,52 +276,116 @@ class _AnatomyModel(_ScriptedModel):
         return out
 
 
-class TestAnatomyStandardization:
-    """#11: targets are standardized with training-partition statistics only."""
+def _record(subject: str, a: float, b: float) -> VisitSequence:
+    """A one-visit training record carrying known anatomy targets."""
+    visit = Visit(
+        subject_id=SubjectId(subject),
+        session_id=SessionId(f"{subject}_d0000"),
+        days_from_entry=0,
+        scan_path=Path("/nonexistent/synthetic"),
+        label=Label.COGNITIVELY_NORMAL,
+        anatomy_targets={"a_mm3": a, "b_mm3": b},
+    )
+    return VisitSequence(subject_id=SubjectId(subject), visits=(visit,))
+
+
+class TestAnatomyStandardizationUsesTrainingStatisticsOnly:
+    """#11: targets standardized with training-partition statistics, and nothing else.
+
+    The loop fits the scaler itself from ``train_loader.dataset.sequences``, so the
+    statistics come from the training partition by construction. These tests make the
+    fit *observable*: the batch the loop trains on is deliberately unlike the training
+    records, so a scaler fitted on the batch — or on anything wider than the training
+    records — produces a different number from the correct one.
+    """
+
+    # Training records: a in {0, 2}, b in {0, 20}  ->  mean (1, 10), population std (1, 10).
+    TRAINING: ClassVar[tuple[VisitSequence, ...]] = (
+        _record("S0", 0.0, 0.0),
+        _record("S1", 2.0, 20.0),
+    )
 
     @staticmethod
-    def _anatomy_batch() -> SequenceBatch:
+    def _batch_with_targets(value_a: float, value_b: float) -> SequenceBatch:
         raw = _batch(LABELS)
         return SequenceBatch(
             **{
                 **vars(raw),
-                "anatomy_targets": torch.tensor(
-                    [[10.0, 100.0], [20.0, 200.0], [30.0, 300.0], [40.0, 400.0]]
-                ),
+                "anatomy_targets": torch.tensor([[value_a, value_b]] * 4),
                 "anatomy_mask": torch.ones(4, dtype=torch.bool),
             }
         )
 
-    def test_the_loop_standardizes_the_targets_it_passes_on(self, tmp_path: Path) -> None:
-        """Raw volumes are in the thousands of mm^3. Handed to the objective unscaled,
-        the auxiliary term dwarfs classification and lambda stops meaning anything."""
-        batch = self._anatomy_batch()
-        scaler = AnatomyTargetScaler().fit(batch.anatomy_targets)
+    def _run(self, tmp_path: Path, **kwargs: object) -> _SpyObjective:
         objective = _SpyObjective()
         train(
             model=_AnatomyModel([PERFECT]),
-            train_loader=_loader([batch]),
+            train_loader=_loader([self._batch_with_targets(4.0, 40.0)], list(self.TRAINING)),
             val_loader=_loader([_batch(LABELS)]),
             objective=objective,
             config=TrainingConfig(max_epochs=1, mixed_precision=False),
             output_dir=tmp_path,
-            anatomy_scaler=scaler,
+            **kwargs,  # type: ignore[arg-type]
         )
-        assert objective.seen, "the objective never received anatomy targets"
-        assert objective.seen[0].abs().max() < 3.0, "targets reached the loss unscaled"
+        return objective
 
-    def test_without_a_scaler_the_raw_targets_are_passed_through(self, tmp_path: Path) -> None:
-        """So the test above cannot pass on a loop that zeroes the targets."""
-        objective = _SpyObjective()
-        train(
-            model=_AnatomyModel([PERFECT]),
-            train_loader=_loader([self._anatomy_batch()]),
-            val_loader=_loader([_batch(LABELS)]),
-            objective=objective,
-            config=TrainingConfig(max_epochs=1, mixed_precision=False),
-            output_dir=tmp_path,
-        )
-        assert objective.seen[0].max() == pytest.approx(400.0)
+    def test_the_statistics_are_the_training_records_not_the_batch(self, tmp_path: Path) -> None:
+        """Worked by hand: (4 - 1) / 1 = 3 and (40 - 10) / 10 = 3.
+
+        Fitted on the batch instead, every row is identical, the spread is zero, and the
+        scaler centres them to 0. So 3 and 0 are the two answers, and only the correct
+        fit gives 3.
+        """
+        seen = self._run(tmp_path, standardize_anatomy=True).seen
+        assert seen, "the objective never received anatomy targets"
+        torch.testing.assert_close(seen[0], torch.full((4, 2), 3.0))
+
+    def test_the_fitted_statistics_travel_with_the_checkpoint(self, tmp_path: Path) -> None:
+        """So the constants a reported run used are recoverable after the fact."""
+        self._run(tmp_path, standardize_anatomy=True)
+        state = torch.load(tmp_path / "best.pt", map_location="cpu")["anatomy_scaler"]
+        assert state == {"mean": [1.0, 10.0], "scale": [1.0, 10.0]}
+
+    def test_without_standardization_the_raw_targets_pass_through(self, tmp_path: Path) -> None:
+        """So the first test cannot pass on a loop that zeroes or rescales everything."""
+        torch.testing.assert_close(self._run(tmp_path).seen[0], torch.tensor([[4.0, 40.0]] * 4))
+
+    def test_a_training_dataset_without_records_is_refused(self, tmp_path: Path) -> None:
+        """Fitting from anything other than the training records would reopen the leak
+        this design closes, so the loop refuses rather than guessing."""
+        with pytest.raises(ValueError, match="sequences"):
+            train(
+                model=_AnatomyModel([PERFECT]),
+                train_loader=_loader([self._batch_with_targets(4.0, 40.0)]),
+                val_loader=_loader([_batch(LABELS)]),
+                objective=_SpyObjective(),
+                config=TrainingConfig(max_epochs=1, mixed_precision=False),
+                output_dir=tmp_path,
+                standardize_anatomy=True,
+            )
+
+    def test_the_scaler_is_never_accepted_from_outside(self) -> None:
+        """The structural half. A parameter that took a pre-fitted scaler would let a
+        caller fit it on the full cohort, and the loop could not tell."""
+        import inspect
+
+        assert "anatomy_scaler" not in inspect.signature(train).parameters
+
+
+class TestEarlyStoppingNeedsAThresholdFreeMetric:
+    """#4 and #8 meet here: thresholds are chosen on validation subjects *after*
+    training, so nothing threshold-dependent can be watched during it."""
+
+    @pytest.mark.parametrize("metric", ["balanced_accuracy", "sensitivity", "macro_f1"])
+    def test_a_threshold_dependent_metric_is_refused(self, metric: str, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="threshold"):
+            _run([PERFECT], tmp_path, early_stopping_metric=metric)
+
+    def test_it_is_refused_before_any_training_happens(self, tmp_path: Path) -> None:
+        """Failing after an epoch would cost a GPU-hour to report a config typo."""
+        with pytest.raises(ValueError):
+            _run([PERFECT], tmp_path, early_stopping_metric="balanced_accuracy")
+        assert not (tmp_path / "history.csv").exists()
 
 
 class TestMixedPrecision:
@@ -319,6 +396,34 @@ class TestMixedPrecision:
         run normally rather than crash or silently claim to have used it."""
         best, _, history = _run([PERFECT], tmp_path, mixed_precision=True)
         assert best.exists() and len(history) == 1
+
+
+@pytest.mark.requires_gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="mixed precision is a CUDA path")
+class TestMixedPrecisionOnCuda:
+    """#8: "Mixed precision and gradient accumulation work."
+
+    Accumulation is proven on CPU above. Mixed precision cannot be: autocast and the
+    GradScaler are CUDA paths, and on CPU the loop deliberately disables them. So this
+    runs only where a GPU exists — CI and `make test` both exclude `requires_gpu` — and
+    it is the test that has to pass before arms PA and PB are trained for the report.
+    """
+
+    def test_a_run_with_mixed_precision_trains_and_stays_finite(self, tmp_path: Path) -> None:
+        model = _ScriptedModel([PERFECT], train_logit=0.3)
+        best = train(
+            model=model,
+            train_loader=_loader([_batch(LABELS)]),
+            val_loader=_loader([_batch(LABELS)]),
+            objective=CombinedObjective(),
+            config=TrainingConfig(max_epochs=1, mixed_precision=True, accumulate_grad_batches=2),
+            output_dir=tmp_path,
+            device=torch.device("cuda"),
+        )
+        history = _history(tmp_path)
+        assert best.exists()
+        assert all(math.isfinite(float(row["train_loss"])) for row in history)
+        assert next(model.parameters()).device.type == "cuda"
 
 
 class TestAnEmptyEpochIsAnError:

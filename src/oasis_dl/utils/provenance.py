@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "PROVENANCE_FILENAME",
     "RunProvenance",
     "capture",
     "git_commit",
@@ -29,6 +30,14 @@ __all__ = [
     "gpu_name",
     "package_versions",
 ]
+
+PROVENANCE_FILENAME = "provenance.json"
+"""The one name for a run's provenance record.
+
+Defined once, here, because the loop writes it and the report generator searches for
+it. Two independent spellings drift, and a rename on one side would leave every results
+table silently empty rather than failing.
+"""
 
 TRACKED_PACKAGES = ("torch", "monai", "torchio", "numpy", "scikit-learn", "nibabel", "pandas")
 """Libraries whose version can change a result. Anything else is noise in the record."""

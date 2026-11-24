@@ -26,6 +26,7 @@ import pandas as pd
 
 from oasis_dl.evaluation.bootstrap import ConfidenceInterval
 from oasis_dl.evaluation.metrics import ClassificationMetrics
+from oasis_dl.utils.provenance import PROVENANCE_FILENAME
 
 __all__ = [
     "RunRecord",
@@ -35,7 +36,6 @@ __all__ = [
     "write_run_results",
 ]
 
-PROVENANCE_FILENAME = "provenance.json"
 RESULTS_FILENAME = "results.json"
 
 TABLE_COLUMNS = [

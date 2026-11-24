@@ -27,10 +27,10 @@ receives the same one.
 
 | | Parameters | Pretraining |
 |---|---|---|
-| `vit_base_brainiac` **(default)** | 117.1M | BrainIAC, SimCLR over ~32k brain MRIs |
-| `vit_base_random` | 117.1M | none — the initialization control |
+| `vit_base_brainiac` **(default)** | 88.3M | BrainIAC, SimCLR over ~32k brain MRIs |
+| `vit_base_random` | 88.3M | none — the initialization control |
 | `resnet18` | 33.2M | none — the from-scratch convolutional reference |
-| `vit_tiny_smoke` | 2.5M | none — smoke runs only, never a reported result |
+| `vit_tiny_smoke` | 2.2M | none — smoke runs only, never a reported result |
 
 Parameter counts are measured at the ADR-0010 input shape by
 `tests/unit/test_encoder.py::TestMemoryFootprint`, not typed.

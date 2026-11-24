@@ -1,6 +1,6 @@
-# A 2.5M-parameter ViT for smoke runs on a machine without a GPU.
+# A 2.2M-parameter ViT for smoke runs on a machine without a GPU.
 #
-# Same code path as vit_base_brainiac, roughly 1/47th the size. For proving a training
+# Same code path as vit_base_brainiac, roughly 1/40th the size at the configured 96^3. For proving a training
 # loop runs end to end before it is queued on real hardware. No result in the report
 # comes from this encoder, and `name` is carried into every run record so one cannot be
 # mistaken for a production run.

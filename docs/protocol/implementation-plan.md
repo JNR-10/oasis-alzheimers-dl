@@ -19,25 +19,6 @@ The decision that saves the most is an ordering one: **sample subjects before
 preprocessing, not after.** Preprocessing is the dominant one-time CPU cost, and
 processing scans that will never be trained on spends all of it for nothing.
 
-### Encoder capacity, and where the footprint lives
-
-The visit encoder's parameter counts follow from the architecture, so they can be
-stated here: resnet10 is 14.4M, **resnet18 (configured) is 33.2M**, resnet34 is 63.5M.
-
-The memory and throughput footprint at the 96³ input shape is **not** reproduced here.
-It is machine-specific, and this repository generates result tables from recorded runs
-rather than typing them (see `AGENTS.md`). The measurement lives in
-`tests/unit/test_encoder.py::TestMemoryFootprint` and is regenerated with `make
-test-all`; it is excluded from CI because 3D volumes at the production shape take
-minutes per backbone.
-
-Worth a decision, not taken here: **33.2M parameters is a heavy model for 300 subjects**
-— roughly 450 training sequences once the cohort is built (#14 reports the real count;
-`docs/data/cohort-definition.md` holds `_tbd_` until then). `resnet10` is under half the
-size. This is a modelling judgement for the team rather than a config tweak, and
-whichever is chosen must be identical across every arm, or ablation 1 confounds
-architecture with capacity.
-
 ## Three tracks
 
 Tickets are grouped so three people can work without queueing behind each other. Claim a
@@ -153,42 +134,59 @@ feasibility rather than to train the arms anyway.
 
 ---
 
-## Amendment, 2026-11-22 — the encoder decision is taken
+## Amendment, 2026-11-22 — the encoder is chosen, and was nearly chosen badly
 
-The open question above ("33.2M parameters is a heavy model for 300 subjects") is
-settled by [ADR-0011](../adr/0011-pretrained-vit-encoder.md), and not in either
-direction the section anticipated.
+**The question.** While implementing the visit encoder (#5), the configured backbone
+was a randomly initialized `resnet18` at 33.2M parameters — heavy for a cohort of 300
+subjects, which is roughly 450 training sequences once built (#14 reports the real
+count; `docs/data/cohort-definition.md` holds `_tbd_` until then). `resnet10` is under
+half the size. Whichever is chosen must be identical across every arm, or ablation 1
+confounds architecture with capacity.
 
-Both options on the table were randomly initialized, so both traded capacity against
+**The answer** is [ADR-0011](../adr/0011-pretrained-vit-encoder.md), and it took
+neither option. Both were randomly initialized, so both traded capacity against
 generalization. The configured encoder is now a **3D ViT-B/16 initialized from
-BrainIAC's self-supervised weights** (117.1M parameters), which sidesteps the trade: the
+BrainIAC's self-supervised weights** (88.3M parameters), which sidesteps the trade: the
 representation comes from ~32k brain MRIs rather than from 450 training sequences.
 `resnet18` is kept as the from-scratch reference and still runs.
 
 Three consequences for the plan as written:
 
 - **The encoder is selected once at the config root** (`configs/encoder/`), not inside
-  each model config. The section's warning that the choice "must be identical across
-  every arm" is now enforced by `tests/unit/test_configs.py` rather than by discipline.
+  each model config. The requirement that it be identical across every arm is enforced
+  by `tests/unit/test_configs.py` rather than by discipline.
 - **BrainIAC's pretraining corpus includes OASIS-3 and OASIS-2.** The reasoning for
   proceeding anyway, and the alternatives rejected, are in ADR-0011. The short version:
   it is self-supervised, so no label leaks, and it is constant across arms, so it
   cancels in the contrasts. Absolute numbers are not comparable with from-scratch
   literature and the report must say so.
 - **Preprocessing now has a fixed target.** BrainIAC's template and a resize to 96³,
-  rather than a free choice of 2 mm resampling. This lands on [#15] and constrains, but
-  does not remove, the registration question in [#16] — within-subject alignment is
-  still the open part.
+  rather than a free choice of 2 mm resampling — see the dated amendment in
+  [`preprocessing.md`](preprocessing.md). This lands on [#15] and constrains, but does
+  not remove, the registration question in [#16].
 
-The footprint numbers remain generated, not typed:
-`tests/unit/test_encoder.py::TestMemoryFootprint` now covers `vit_base_16` alongside the
-ResNets.
+### Where the numbers live
+
+Parameter counts follow from the architecture, so they can be stated — but they are
+*checked*, not trusted: `tests/unit/test_configs.py` reads ADR-0011's table and measures
+each encoder as configured. That test exists because the first version of that table
+was typed, and two of its four figures were measured at the wrong embedding width and
+input shape. Correcting them then exposed a third problem: MONAI 1.4's `ViT` allocates a
+cross-attention layer in every block and never runs it — 28.3M of ViT-B's 116.7M
+parameters. The encoder now removes those after construction (the forward pass is
+bit-identical, and a test pins that), which brings ViT-B to 88.3M: the figure BrainIAC
+publishes for its own encoder, and the architecture its checkpoint actually fits.
+
+The memory and throughput footprint is machine-specific, so it is **not** reproduced
+here. It is measured by `tests/unit/test_encoder.py::TestMemoryFootprint` and
+regenerated with `make test-all`; it is excluded from CI because 3D volumes at the
+production shape take minutes per backbone.
 
 ### One new cost, and where it lands
 
 `vit_base_16` at 96³ is over a second per forward pass on a laptop CPU, so the real arms
 ([#18], [#19], [#20]) need a GPU to be worth starting. `configs/encoder/vit_tiny_smoke.yaml`
-is the same code path at 2.5M parameters, for proving a training loop runs end to end on
+is the same code path at 2.2M parameters, for proving a training loop runs end to end on
 any machine before it is queued on real hardware. No reported result comes from it, and
 the encoder name is carried into every run record so the two cannot be confused.
 

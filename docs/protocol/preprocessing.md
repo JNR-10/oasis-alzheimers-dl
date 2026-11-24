@@ -56,3 +56,34 @@ structural MRI can destroy the atrophy signal the task depends on.
 For a longitudinal sample, the **same** spatial augmentation is applied across a
 subject's visits. Augmenting each visit independently injects apparent anatomical change
 between visits, which is exactly the signal the temporal module is trying to read.
+
+---
+
+## Amendment, 2026-11-22 — the encoder fixes the resampling target
+
+[ADR-0011](../adr/0011-pretrained-vit-encoder.md) makes the shared encoder a ViT-B/16
+initialized from BrainIAC's self-supervised weights. Pretrained weights only help when
+the input resembles what they were fitted on, so stages 3–5 above are no longer free
+choices:
+
+| # | Stage | Was | Now |
+|---|---|---|---|
+| 3 | Brain extraction | any method | **HD-BET**, as BrainIAC used |
+| 4 | Registration | to a template of our choosing | **rigid, to the BrainIAC template** (1 mm, LAS, 170×206×162) |
+| 5 | Resampling | to a common isotropic voxel size | **resize the registered volume to 96³** |
+
+Stage 2 remains bias-field correction, now specifically N4.
+
+**Stage 5 is no longer isotropic.** The template is 170×206×162, so resizing it to a
+cube scales each axis differently and the effective voxel is anisotropic. That is why
+`configs/data/oasis3_longitudinal.yaml` carries `voxel_size_mm: _tbd_` rather than the
+`2.0` it held before: the real figure comes from the template header in #15, and `2.0`
+would have been a plausible number that nothing produces.
+
+**What does not change.** The output is still 96³, so ADR-0010's compute argument holds
+and nothing downstream moves. The stage order and the failure-handling rules above are
+unchanged. And the open question under *Registration target* is untouched: ADR-0011
+fixes *which* template, not whether a subject's visits are aligned to one another
+before the subject is aligned to it. Registering each scan independently can still
+absorb the within-subject atrophy the temporal module exists to read, so that remains
+#16's question to settle empirically.

@@ -21,10 +21,9 @@ from torch.utils.data import DataLoader
 
 from oasis_dl.evaluation.metrics import compute_metrics
 from oasis_dl.training.losses import AnatomyTargetScaler
-from oasis_dl.utils.provenance import RunProvenance
+from oasis_dl.utils.provenance import PROVENANCE_FILENAME, RunProvenance
 
 __all__ = [
-    "PROVENANCE_FILENAME",
     "TrainingConfig",
     "evaluate_split",
     "pos_weight_from_labels",
@@ -32,7 +31,15 @@ __all__ = [
 ]
 
 HISTORY_FILENAME = "history.csv"
-PROVENANCE_FILENAME = "provenance.json"
+
+THRESHOLD_FREE_METRICS = frozenset({"roc_auc"})
+"""Metrics early stopping may watch.
+
+Every other metric depends on a threshold, and during training there is none: the
+operating point is chosen on validation subjects *after* training (#4). Watching one
+mid-training means watching it at an arbitrary 0.5 — a stopping rule tuned to a
+threshold that will never be used.
+"""
 BEST_CHECKPOINT_FILENAME = "best.pt"
 
 
@@ -113,7 +120,7 @@ def train(
     config: TrainingConfig,
     output_dir: Path,
     device: torch.device | None = None,
-    anatomy_scaler: AnatomyTargetScaler | None = None,
+    standardize_anatomy: bool = False,
     provenance: RunProvenance | None = None,
 ) -> Path:
     """Train one arm and return the path of its best checkpoint.
@@ -123,10 +130,13 @@ def train(
     :mod:`oasis_dl.cli.evaluate`, after training is complete.
 
     Args:
-        anatomy_scaler: Arm PB only. Must be fitted on the **training** partition's
-            targets before it is passed here (ADR-0007). Standardizing inside the loop
-            rather than in the dataset keeps the fit in the caller's hands, where the
-            partition it was fitted on is visible.
+        standardize_anatomy: Arm PB only. Standardizes anatomy targets with statistics
+            fitted **inside this function, from ``train_loader``'s own sequences**
+            (ADR-0007). The loop fits the scaler rather than accepting one, because a
+            scaler handed in cannot say what it was fitted on — and fitting on the full
+            cohort is the quiet leak AGENTS.md names: no row crosses a partition, so no
+            split check sees it. Here the only data within reach is the training
+            partition, so the wrong fit is not expressible.
         provenance: Written to ``output_dir`` **before the first batch** (ADR-0008), so
             a run that crashes still leaves a record of what was attempted. A record
             written at the end only ever describes runs that succeeded, which are the
@@ -136,8 +146,16 @@ def train(
         Path to the checkpoint with the best validation metric.
 
     Raises:
-        ValueError: If ``early_stopping_metric`` is not a metric the protocol computes.
+        ValueError: If ``early_stopping_metric`` depends on a decision threshold.
     """
+    if config.early_stopping_metric not in THRESHOLD_FREE_METRICS:
+        raise ValueError(
+            f"early_stopping_metric {config.early_stopping_metric!r} depends on a "
+            f"decision threshold, and none exists until training is over — it is chosen "
+            f"on validation subjects afterwards. Watch one of "
+            f"{sorted(THRESHOLD_FREE_METRICS)} instead."
+        )
+
     output_dir.mkdir(parents=True, exist_ok=True)
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -147,6 +165,8 @@ def train(
     # start of a run rather than written out with the results.
     if provenance is not None:
         provenance.write(output_dir / PROVENANCE_FILENAME)
+
+    anatomy_scaler = _fit_anatomy_scaler(train_loader) if standardize_anatomy else None
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
@@ -218,11 +238,9 @@ def train(
             )
 
         labels, scores, _ = evaluate_split(model, val_loader, device)
+        # 0.5 is a placeholder the watched metric never reads: only threshold-free
+        # metrics are allowed here (checked on entry), and ROC-AUC ignores it.
         metrics = compute_metrics(labels, scores, threshold=0.5)
-        if not hasattr(metrics, config.early_stopping_metric):
-            raise ValueError(
-                f"early_stopping_metric {config.early_stopping_metric!r} is not a computed metric"
-            )
         watched = float(getattr(metrics, config.early_stopping_metric))
 
         divisor = max(seen, 1)
@@ -250,6 +268,9 @@ def train(
                     "epoch": epoch,
                     config.early_stopping_metric: watched,
                     "config": vars(config),
+                    # Kept with the weights so a prediction can be reported back in
+                    # mm^3, and so the statistics the run used are recoverable.
+                    "anatomy_scaler": _scaler_state(anatomy_scaler),
                 },
                 best_path,
             )
@@ -266,6 +287,32 @@ def train(
             best_path,
         )
     return best_path
+
+
+def _fit_anatomy_scaler(train_loader: DataLoader[object]) -> AnatomyTargetScaler:
+    """Fit the anatomy scaler from the training loader's own sequences.
+
+    Reads the sequence records, not the scans, so it costs a pass over a list rather
+    than over the data.
+
+    Raises:
+        ValueError: If the training dataset does not expose its sequences. Fitting from
+            anything else would reopen the question this function exists to close.
+    """
+    sequences = getattr(getattr(train_loader, "dataset", None), "sequences", None)
+    if sequences is None:
+        raise ValueError(
+            "standardize_anatomy needs a training dataset that exposes `.sequences`, so "
+            "the scaler is fitted from the training partition and nothing else."
+        )
+    return AnatomyTargetScaler.fit_from_sequences(sequences)
+
+
+def _scaler_state(scaler: AnatomyTargetScaler | None) -> dict[str, list[float]] | None:
+    """The fitted constants as plain lists, so a checkpoint round-trips through JSON."""
+    if scaler is None or scaler.mean is None or scaler.scale is None:
+        return None
+    return {"mean": scaler.mean.tolist(), "scale": scaler.scale.tolist()}
 
 
 def _validation_loss(labels: list[int], scores: list[float]) -> float:

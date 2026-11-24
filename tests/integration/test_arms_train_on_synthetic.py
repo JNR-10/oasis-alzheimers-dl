@@ -13,6 +13,7 @@ that the three arms differ only where the protocol says they may.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -37,7 +38,6 @@ from oasis_dl.evaluation.bootstrap import bootstrap_metrics
 from oasis_dl.evaluation.metrics import (
     compute_metrics,
     select_threshold,
-    write_metrics_table,
 )
 from oasis_dl.evaluation.reporting import write_run_results
 from oasis_dl.models.arms import LongitudinalModel, SingleScanModel
@@ -45,7 +45,7 @@ from oasis_dl.models.encoder import VisitEncoder
 from oasis_dl.models.heads import AnatomyHead, ClassificationHead
 from oasis_dl.models.temporal import TemporalAttention
 from oasis_dl.training.loop import TrainingConfig, evaluate_split, pos_weight_from_labels, train
-from oasis_dl.training.losses import AnatomyTargetScaler, CombinedObjective
+from oasis_dl.training.losses import CombinedObjective
 from oasis_dl.training.seed import seed_everything
 from oasis_dl.types import Partition, VisitSequence
 from oasis_dl.utils.provenance import RunProvenance
@@ -120,31 +120,19 @@ def _loaders(
     return build(Partition.TRAIN), build(Partition.VAL)
 
 
-def _training_anatomy(grouped: dict[Partition, list[VisitSequence]]) -> torch.Tensor:
-    """Stack the training partition's anatomy targets, in the order collation uses.
-
-    Training rows only. Fitting the scaler on anything wider would leak test-subject
-    anatomy into training through the normalization constants — the quiet kind of leak,
-    because no row crosses a partition boundary and no split check can see it.
-    """
-    rows = [
-        sequence.target_visit.anatomy_targets
-        for sequence in grouped[Partition.TRAIN]
-        if sequence.target_visit.anatomy_targets
-    ]
-    keys = sorted(rows[0])
-    return torch.tensor([[row[key] for key in keys] for row in rows], dtype=torch.float32)
-
-
-def _evaluate_and_write(
+def _evaluate_and_record(
     model: torch.nn.Module,
     grouped: dict[Partition, list[VisitSequence]],
     val_loader: DataLoader[object],
     collate: object,
     arm: str,
-    table_path: Path,
-) -> None:
-    """Choose the threshold on validation, then read the test partition once."""
+    run_dir: Path,
+) -> dict[str, object]:
+    """Choose the threshold on validation, read the test partition once, record it.
+
+    Through `write_run_results`, the only route to a reportable number: a table written
+    straight from in-memory metrics would carry no commit, seed or cohort size.
+    """
     device = torch.device("cpu")
     val_labels, val_scores, _ = evaluate_split(model, val_loader, device)
     threshold = select_threshold(val_labels, val_scores)
@@ -154,8 +142,17 @@ def _evaluate_and_write(
         batch_size=2,
         collate_fn=collate,  # type: ignore[arg-type]
     )
-    labels, scores, _ = evaluate_split(model, held_out, device)
-    write_metrics_table({arm: compute_metrics(labels, scores, threshold=threshold)}, table_path)
+    labels, scores, subjects = evaluate_split(model, held_out, device)
+    path = write_run_results(
+        run_dir,
+        arm=arm,
+        partition="test",
+        metrics=compute_metrics(labels, scores, threshold=threshold),
+        n_subjects=len(set(subjects)),
+        n_visits=len(labels),
+    )
+    record: dict[str, object] = json.loads(path.read_text())
+    return record
 
 
 def _encoder() -> VisitEncoder:
@@ -223,9 +220,18 @@ class TestTheThreeArmsRunEndToEnd:
         labels, scores, subjects = evaluate_split(model, test_loader, torch.device("cpu"))
         metrics = compute_metrics(labels, scores, threshold=threshold)
 
-        table = write_metrics_table({"B1": metrics}, tmp_path / "results" / "metrics.csv")
-        assert table.exists()
-        assert "roc_auc" in table.read_text().splitlines()[0]
+        record = json.loads(
+            write_run_results(
+                tmp_path / "b1",
+                arm="B1",
+                partition="test",
+                metrics=metrics,
+                n_subjects=len(set(subjects)),
+                n_visits=len(labels),
+            ).read_text()
+        )
+        assert record["arm"] == "B1"
+        assert "roc_auc" in record["metrics"]
         assert metrics.n == len(subjects) == len(partitioned[Partition.TEST])
         assert metrics.threshold == pytest.approx(threshold)
 
@@ -251,9 +257,10 @@ class TestTheThreeArmsRunEndToEnd:
         )
         assert best.exists()
 
-        table = tmp_path / "pa" / "metrics.csv"
-        _evaluate_and_write(model, partitioned, val_loader, collate_sequences, "PA", table)
-        assert "PA" in table.read_text()
+        record = _evaluate_and_record(
+            model, partitioned, val_loader, collate_sequences, "PA", tmp_path / "pa"
+        )
+        assert record["arm"] == "PA"
 
     def test_pb_trains_with_the_auxiliary_objective(
         self, partitioned: dict[Partition, list[VisitSequence]], tmp_path: Path
@@ -261,11 +268,6 @@ class TestTheThreeArmsRunEndToEnd:
         """#11. PA plus the anatomy head and the combined objective."""
         seed_everything(7, deterministic=False)
         train_loader, val_loader = _loaders(partitioned, collate_sequences, anatomy=True)
-
-        # Fitted on the training partition alone, before training starts.
-        training_targets = _training_anatomy(partitioned)
-        assert training_targets.shape[1] == len(TARGETS)
-        scaler = AnatomyTargetScaler().fit(training_targets)
 
         model = LongitudinalModel(
             encoder=_encoder(),
@@ -281,7 +283,8 @@ class TestTheThreeArmsRunEndToEnd:
             config=_config(),
             output_dir=tmp_path / "pb",
             device=torch.device("cpu"),
-            anatomy_scaler=scaler,
+            # Fitted inside the loop from the training loader's records only.
+            standardize_anatomy=True,
         )
         assert best.exists()
 
@@ -291,9 +294,10 @@ class TestTheThreeArmsRunEndToEnd:
         anatomy_column = history[0].split(",").index("train_anatomy")
         assert float(history[1].split(",")[anatomy_column]) > 0.0
 
-        table = tmp_path / "pb" / "metrics.csv"
-        _evaluate_and_write(model, partitioned, val_loader, collate_sequences, "PB", table)
-        assert "PB" in table.read_text()
+        record = _evaluate_and_record(
+            model, partitioned, val_loader, collate_sequences, "PB", tmp_path / "pb"
+        )
+        assert record["arm"] == "PB"
 
 
 @pytest.mark.slow
