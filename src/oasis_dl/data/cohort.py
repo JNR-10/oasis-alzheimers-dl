@@ -220,16 +220,38 @@ def build_sequences(
         visits: All visits in the cohort, in any order.
         max_length: Keep at most this many visits, counting back from the target.
             None keeps all of them. Bounds memory for subjects with long histories.
+            ADR-0010 sets this to 3 for the production cohort.
 
     Returns:
         One sequence per labeled visit, so a subject with three labeled visits
         contributes three correlated sequences. That correlation is handled by sampling
         or loss weighting, never by splitting the subject across partitions (ADR-0001).
+        Sequences are ordered by ``(subject_id, target days_from_entry)`` so a caller
+        cannot accidentally depend on the input iteration order.
     """
-    raise NotImplementedError(
-        "Blocked on build_visits. The grouping logic itself is dataset-independent and "
-        "can be written as soon as the Visit stream is real."
-    )
+    if max_length is not None and max_length < 1:
+        raise ValueError(f"max_length must be at least 1, got {max_length}")
+
+    by_subject: dict[SubjectId, list[Visit]] = defaultdict(list)
+    for visit in visits:
+        by_subject[visit.subject_id].append(visit)
+
+    sequences: list[VisitSequence] = []
+    for subject_id in sorted(by_subject):
+        # Secondary key on session_id so equal days_from_entry stay deterministic.
+        ordered = sorted(
+            by_subject[subject_id],
+            key=lambda v: (v.days_from_entry, str(v.session_id)),
+        )
+        for index, target in enumerate(ordered):
+            if target.label is None:
+                continue
+            history = ordered[: index + 1]
+            if max_length is not None:
+                history = history[-max_length:]
+            sequences.append(VisitSequence(subject_id=subject_id, visits=tuple(history)))
+
+    return sequences
 
 
 def summarize_cohort(sequences: Sequence[VisitSequence]) -> pd.DataFrame:

@@ -39,6 +39,10 @@ would make the pipeline look broken on scans it never opened.
 """
 
 
+def _missing_columns(frame: pd.DataFrame) -> list[str]:
+    return [name for name in COLUMNS if name not in frame.columns]
+
+
 def write_manifest(frame: pd.DataFrame, path: Path) -> None:
     """Write a manifest, refusing to overwrite an existing one.
 
@@ -50,7 +54,18 @@ def write_manifest(frame: pd.DataFrame, path: Path) -> None:
         FileExistsError: If ``path`` already exists.
         ValueError: If any of :data:`COLUMNS` is missing.
     """
-    raise NotImplementedError
+    missing = _missing_columns(frame)
+    if missing:
+        raise ValueError(f"manifest is missing columns: {', '.join(missing)}")
+    if path.exists():
+        raise FileExistsError(
+            f"refusing to overwrite existing manifest at {path}; "
+            f"a new cohort needs a new filename (ADR-0008)"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Column order is part of the schema contract — write in COLUMNS order even if the
+    # caller built the frame with extras or a different order.
+    frame.loc[:, list(COLUMNS)].to_csv(path, index=False)
 
 
 def read_manifest(path: Path) -> pd.DataFrame:
@@ -60,4 +75,10 @@ def read_manifest(path: Path) -> pd.DataFrame:
         FileNotFoundError: If the manifest is absent.
         ValueError: If any of :data:`COLUMNS` is missing.
     """
-    raise NotImplementedError
+    if not path.exists():
+        raise FileNotFoundError(f"manifest not found: {path}")
+    frame = pd.read_csv(path)
+    missing = _missing_columns(frame)
+    if missing:
+        raise ValueError(f"manifest is missing columns: {', '.join(missing)}")
+    return frame.loc[:, list(COLUMNS)]
