@@ -11,7 +11,7 @@ fallback of ADR-0003 is a different implementation rather than a rewrite.
 from __future__ import annotations
 
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +19,7 @@ from typing import Protocol
 
 import pandas as pd
 
-from oasis_dl.types import Label, SubjectId, Visit, VisitSequence
+from oasis_dl.types import Label, Partition, SubjectId, Visit, VisitSequence
 
 
 @dataclass(frozen=True)
@@ -254,10 +254,124 @@ def build_sequences(
     return sequences
 
 
-def summarize_cohort(sequences: Sequence[VisitSequence]) -> pd.DataFrame:
+def summarize_cohort(
+    sequences: Sequence[VisitSequence],
+    assignment: Mapping[SubjectId, Partition] | None = None,
+) -> pd.DataFrame:
     """Produce the counts that fill docs/data/cohort-definition.md.
 
-    Subjects, visits, and label balance per partition, plus the visit-count
-    distribution that decides whether the temporal module has anything to learn from.
+    Returns a long-form frame with columns ``section``, ``key``, ``value`` so the
+    visit-count distribution, label balance, and (when ``assignment`` is given)
+    per-partition balance can sit in one table without inventing a wide schema that
+    would have to change every time the document gains a row.
+
+    The visit-count distribution is the Gate-2 number: how many subjects have 1, 2,
+    3, … eligible visits. A cohort that is overwhelmingly single-visit cannot support
+    a longitudinal claim regardless of architecture.
+
+    Subject labels follow :func:`~oasis_dl.data.splits.subject_label`: impaired if any
+    target visit is impaired. That is the stratification label, not the per-visit
+    training label.
+
+    Args:
+        sequences: Every sequence in the cohort.
+        assignment: Optional subject→partition map. When omitted, partition rows are
+            left out rather than guessed — a summary that invents partitions would
+            disagree with the manifest.
+
+    Raises:
+        ValueError: If ``sequences`` is empty, or ``assignment`` names a subject that
+            is not in ``sequences``, or leaves a sequence subject unassigned.
     """
-    raise NotImplementedError("Blocked on build_sequences.")
+    if not sequences:
+        raise ValueError("cannot summarize an empty cohort")
+
+    by_subject: dict[SubjectId, list[VisitSequence]] = defaultdict(list)
+    for sequence in sequences:
+        by_subject[sequence.subject_id].append(sequence)
+
+    if assignment is not None:
+        assigned = set(assignment)
+        present = set(by_subject)
+        missing = sorted(str(s) for s in present - assigned)
+        extra = sorted(str(s) for s in assigned - present)
+        if missing or extra:
+            raise ValueError(
+                "assignment does not match the cohort subjects"
+                + (f"; unassigned: {missing}" if missing else "")
+                + (f"; unknown: {extra}" if extra else "")
+            )
+
+    rows: list[dict[str, object]] = [
+        {"section": "totals", "key": "subjects", "value": len(by_subject)},
+        {"section": "totals", "key": "sequences", "value": len(sequences)},
+    ]
+
+    # Unique visits per subject — unlabeled context visits count toward eligibility.
+    visit_counts: Counter[int] = Counter()
+    label_counts: Counter[str] = Counter()
+    visit_total = 0
+    for _subject_id, subject_sequences in by_subject.items():
+        sessions = {v.session_id for seq in subject_sequences for v in seq.visits}
+        n_visits = len(sessions)
+        visit_counts[n_visits] += 1
+        visit_total += n_visits
+        labels = [seq.label for seq in subject_sequences]
+        subject_is_impaired = any(label is Label.IMPAIRED for label in labels)
+        label_counts[
+            Label.IMPAIRED.name if subject_is_impaired else Label.COGNITIVELY_NORMAL.name
+        ] += 1
+
+    rows.append({"section": "totals", "key": "visits", "value": visit_total})
+    for n_visits in sorted(visit_counts):
+        rows.append(
+            {
+                "section": "visit_count",
+                "key": str(n_visits),
+                "value": visit_counts[n_visits],
+            }
+        )
+    for label_name in (
+        Label.COGNITIVELY_NORMAL.name,
+        Label.IMPAIRED.name,
+    ):
+        rows.append(
+            {
+                "section": "label",
+                "key": label_name,
+                "value": label_counts.get(label_name, 0),
+            }
+        )
+
+    if assignment is not None:
+        for partition in (Partition.TRAIN, Partition.VAL, Partition.TEST):
+            members = [sid for sid, part in assignment.items() if part is partition]
+            rows.append(
+                {
+                    "section": f"partition_{partition.value}",
+                    "key": "subjects",
+                    "value": len(members),
+                }
+            )
+            part_labels: Counter[str] = Counter()
+            for sid in members:
+                labels = [seq.label for seq in by_subject[sid]]
+                name = (
+                    Label.IMPAIRED.name
+                    if any(label is Label.IMPAIRED for label in labels)
+                    else Label.COGNITIVELY_NORMAL.name
+                )
+                part_labels[name] += 1
+            for label_name in (
+                Label.COGNITIVELY_NORMAL.name,
+                Label.IMPAIRED.name,
+            ):
+                rows.append(
+                    {
+                        "section": f"partition_{partition.value}",
+                        "key": label_name,
+                        "value": part_labels.get(label_name, 0),
+                    }
+                )
+
+    return pd.DataFrame(rows, columns=["section", "key", "value"])
