@@ -16,7 +16,6 @@ ASEG_STATS = """\
 # Measure BrainSeg, BrainSegVol, Brain Segmentation Volume, 1100000.000000, mm^3
 # Measure TotalGray, TotalGrayVol, Total Gray Matter Volume, 600000.000000, mm^3
 # Measure EstimatedTotalIntraCranialVol, eTIV, Estimated Total Intracranial Volume, 1500000.000000, mm^3
-# Measure CSF, CSF, CSF Volume, 150000.000000, mm^3
 # ColHeaders Index SegId NVoxels Volume_mm3 StructName
  1 17 4000 4000.0 Left-Hippocampus
  2 53 4100 4100.0 Right-Hippocampus
@@ -27,6 +26,7 @@ ASEG_STATS = """\
  7 14 1000 1000.0 3rd-Ventricle
  8 15 1100 1100.0 4th-Ventricle
  9 72 50 50.0 5th-Ventricle
+ 10 24 1445 1445.2 CSF
 """
 
 LH_APARC = """\
@@ -62,7 +62,39 @@ class TestExtractAnatomyTargets:
         assert targets["total_ventricular_volume_mm3"] == (
             12000 + 13000 + 800 + 900 + 1000 + 1100 + 50
         )
-        assert targets["csf_to_brain_ratio"] == pytest.approx(150000 / 1500000)
+
+    def test_the_csf_segmentation_label_is_not_read_as_total_csf(
+        self, freesurfer_session: Path
+    ) -> None:
+        """FreeSurfer writes no total-CSF measure. Its ``CSF`` row is segmentation label
+        24, about 1.4 cm^3 of extra-ventricular CSF, so a ratio built on it would be a
+        quietly wrong training target roughly a hundred times too small. The fixture
+        follows the real aseg.stats layout (FreeSurfer 5.3), where CSF appears only as
+        that table row."""
+        targets = extract_anatomy_targets(freesurfer_session)
+        assert "csf_to_brain_ratio" not in targets
+
+    def test_a_one_row_per_session_spreadsheet_is_refused_not_read_as_empty(
+        self, tmp_path: Path
+    ) -> None:
+        """A spreadsheet laid out one row per session must not come back as ``{}``,
+        which callers read as "this session has no FreeSurfer output" — every training
+        subject would silently lose its anatomy targets and arm PB would quietly become
+        arm PA."""
+        sheet = tmp_path / "freesurfer.csv"
+        sheet.write_text(
+            "session,Left-Hippocampus,Right-Hippocampus\nS1_d0001,3500.0,3600.0\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="not a recognized"):
+            extract_anatomy_targets(sheet)
+
+    def test_stats_files_that_yield_nothing_are_an_error(self, tmp_path: Path) -> None:
+        stats = tmp_path / "stats"
+        stats.mkdir()
+        (stats / "aseg.stats").write_text("this is not FreeSurfer output\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="no FreeSurfer field"):
+            extract_anatomy_targets(tmp_path)
 
     def test_missing_directory_returns_empty(self, tmp_path: Path) -> None:
         assert extract_anatomy_targets(tmp_path / "absent") == {}

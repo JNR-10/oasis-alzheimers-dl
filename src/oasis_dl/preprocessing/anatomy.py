@@ -149,18 +149,48 @@ def _collect_fields(session_derivatives: Path) -> dict[str, float]:
     values: dict[str, float] = {}
     for path in files:
         if path.suffix == ".csv":
-            for raw in path.read_text(encoding="utf-8").splitlines():
-                if not raw.strip() or raw.lstrip().startswith("#"):
-                    continue
-                parts = [p.strip() for p in raw.split(",")]
-                if len(parts) < 2 or parts[0].lower() in {"name", "struct", "structname"}:
-                    continue
-                try:
-                    values[parts[0]] = float(parts[1])
-                except ValueError:
-                    continue
+            values.update(_load_name_value_csv(path))
             continue
         values.update(_load_stats_map(path))
+
+    # Files were there and nothing came out of them: a format this parser does not
+    # know. Returning {} would read as "no FreeSurfer output for this session", which
+    # is a legitimate state — so the format mismatch has to be an error instead.
+    if files and not values:
+        raise ValueError(
+            f"found {', '.join(str(f) for f in files)} but read no FreeSurfer field "
+            f"from them; the layout is not one this parser knows"
+        )
+    return values
+
+
+_NAME_VALUE_HEADERS = frozenset({"name", "struct", "structname"})
+
+
+def _load_name_value_csv(path: Path) -> dict[str, float]:
+    """Read a two-column ``name,volume`` CSV, one structure per row.
+
+    Any other layout is refused rather than skipped row by row. The OASIS-3 FreeSurfer
+    spreadsheet is one row per *session*; read through this function its rows would
+    either all fail to parse or turn session labels into structure names, and both
+    end as an empty target set that looks like a session without derivatives.
+    """
+    rows = [
+        [cell.strip() for cell in raw.split(",")]
+        for raw in path.read_text(encoding="utf-8").splitlines()
+        if raw.strip() and not raw.lstrip().startswith("#")
+    ]
+    if not rows or rows[0][0].lower() not in _NAME_VALUE_HEADERS:
+        raise ValueError(
+            f"{path} is not a recognized name,volume CSV (its first column must be "
+            f"headed one of {sorted(_NAME_VALUE_HEADERS)}). A one-row-per-session "
+            f"spreadsheet needs its own reader — see #17."
+        )
+    values: dict[str, float] = {}
+    for row in rows[1:]:
+        if len(row) < 2:
+            raise ValueError(f"{path}: row {row} has no volume column")
+        values[row[0]] = float(row[1])
     return values
 
 
@@ -208,11 +238,11 @@ def _build_targets(
         if all(part is not None for part in parts):
             built["total_ventricular_volume_mm3"] = float(sum(parts))  # type: ignore[arg-type]
 
-    if "csf_to_brain_ratio" in targets:
-        csf = _first("CSF", "VolumeOfCSF", fields=fields)
-        etiv = _first("EstimatedTotalIntraCranialVol", "eTIV", fields=fields)
-        if csf is not None and etiv is not None and etiv > 0:
-            built["csf_to_brain_ratio"] = csf / etiv
+    # csf_to_brain_ratio is deliberately not built from .stats files. FreeSurfer writes
+    # no total-CSF measure, and its "CSF" table row is segmentation label 24 — about
+    # 1.4 cm^3 of extra-ventricular CSF — so a ratio on it would be a training target
+    # roughly a hundred times too small that nothing flags. It stays omitted until #17
+    # confirms a real total-CSF source in the OASIS-3 spreadsheet.
 
     return built
 
@@ -238,6 +268,11 @@ def extract_anatomy_targets(
         than zero-filled — a zero volume is a plausible-looking number that is never
         true, and a session without FreeSurfer output returns an empty dict so the
         caller can record the gap in the manifest.
+
+    Raises:
+        ValueError: If FreeSurfer files are present but none of them could be read.
+            That is a format this parser does not know, and returning an empty dict
+            would make it indistinguishable from a session with no derivatives.
     """
     fields = _collect_fields(session_derivatives)
     if not fields:
