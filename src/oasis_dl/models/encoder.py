@@ -73,9 +73,14 @@ class _PooledViT(nn.Module):
     MONAI's ``ViT`` returns ``(batch, tokens, hidden)`` plus its intermediate states.
     Mean-pooling over tokens is what makes this encoder *shared* in the sense ADR-0005
     means: the result does not depend on where a patch sits, so two identical volumes
-    encode identically wherever they appear. Taking a class token instead would be
-    equally valid, but these checkpoints are pretrained contrastively over pooled
-    features, so pooling is also what the weights were fitted for.
+    encode identically wherever they appear.
+
+    There is no class token to take instead. MONAI adds one only with
+    ``classification=True``, and BrainIAC's ViT is built without it, as this one is.
+    BrainIAC's fine-tuning code reads ``features[0][:, 0]`` and calls it the CLS token,
+    but in that model token 0 is the first patch, one corner of the volume. How its
+    SimCLR pretraining pooled is not in its public code, so whether mean pooling matches
+    what the weights were fitted for is unconfirmed.
     """
 
     def __init__(self, vit: nn.Module) -> None:
@@ -210,6 +215,8 @@ class PretrainedCheckpoint:
         license_terms: Short form. All current entries are research-only.
         pretraining_corpus: Named datasets used for self-supervised pretraining.
         overlaps_oasis: Whether that corpus includes any OASIS release.
+        key_prefix: What the file puts before each backbone weight's name. Weights
+            outside it, such as a pretraining projection head, are not loaded.
     """
 
     backbone: str
@@ -217,6 +224,7 @@ class PretrainedCheckpoint:
     license_terms: str
     pretraining_corpus: tuple[str, ...]
     overlaps_oasis: bool
+    key_prefix: str = ""
 
 
 _CHECKPOINTS: dict[str, PretrainedCheckpoint] = {
@@ -226,6 +234,10 @@ _CHECKPOINTS: dict[str, PretrainedCheckpoint] = {
         license_terms="BrainIAC Research-Only License (non-commercial academic)",
         pretraining_corpus=("ABCD", "ADNI", "OASIS-2", "OASIS-3", "ABIDE", "PPMI", "IXI"),
         overlaps_oasis=True,
+        # The released file is a Lightning checkpoint holding the ViT under `backbone.`
+        # beside the SimCLR projection head; BrainIAC's own loader strips the prefix the
+        # same way (src/model.py).
+        key_prefix="backbone.",
     ),
 }
 """Known checkpoints. Weights are never committed — see :meth:`VisitEncoder.pretrained_checkpoints`."""
@@ -310,7 +322,7 @@ class VisitEncoder(nn.Module):
 
         if pretrained is not None:
             assert checkpoint_path is not None  # established by _check_pretrained
-            self._load_pretrained(checkpoint_path)
+            self._load_pretrained(_CHECKPOINTS[pretrained], checkpoint_path)
 
     def _check_pretrained(self, name: str, checkpoint_path: Path | None) -> None:
         """Refuse an unusable checkpoint, and announce a contaminated one.
@@ -347,27 +359,44 @@ class VisitEncoder(nn.Module):
                 stacklevel=3,
             )
 
-    def _load_pretrained(self, checkpoint_path: Path) -> None:
-        """Copy the checkpoint into the backbone, reporting what did not match.
+    def _load_pretrained(self, spec: PretrainedCheckpoint, checkpoint_path: Path) -> None:
+        """Copy every backbone weight in the checkpoint into the network, or refuse.
 
-        ``load_state_dict`` with ``strict=False`` is the only workable mode across
-        third-party checkpoints, and it is also the quiet one: a key-naming mismatch
-        loads nothing at all and training proceeds from random weights at full speed.
-        So the result is inspected and a checkpoint that matched no parameter is an
-        error, not a warning.
+        Only the weights under ``spec.key_prefix`` are read, with the prefix removed,
+        and they go into the MONAI network itself rather than this encoder's wrapper
+        around it, which is how the checkpoint's authors load it too.
+
+        A key mismatch is silent in ``load_state_dict(strict=False)``: training then
+        proceeds from random weights, wholly or in part, at full speed and with every
+        shape right. So the result is inspected, and anything short of an exact match
+        is an error. Total mismatch gets its own message because it is the usual cause:
+        a file laid out differently from what ``key_prefix`` says.
         """
         state = torch.load(checkpoint_path, map_location="cpu")
         for key in ("state_dict", "model", "model_state_dict"):
             if isinstance(state, dict) and key in state:
                 state = state[key]
                 break
-        result = self.body.load_state_dict(state, strict=False)
-        matched = len(list(self.body.state_dict())) - len(result.missing_keys)
+        prefix = spec.key_prefix
+        weights = {k[len(prefix) :]: v for k, v in state.items() if k.startswith(prefix)}
+
+        network = self.body.vit if isinstance(self.body, _PooledViT) else self.body
+        result = network.load_state_dict(weights, strict=False)
+        matched = len(network.state_dict()) - len(result.missing_keys)
         if matched == 0:
             raise ValueError(
                 f"checkpoint {checkpoint_path} matched no parameter of {self.backbone}. "
-                f"Its keys look like {list(state)[:3]}. Training would have started from "
-                f"random weights while reporting itself as pretrained."
+                f"Its keys look like {list(state)[:3]}, and backbone weights were "
+                f"expected under {prefix!r}. Training would have started from random "
+                f"weights while reporting itself as pretrained."
+            )
+        if result.missing_keys or result.unexpected_keys:
+            raise ValueError(
+                f"checkpoint {checkpoint_path} only partly fits {self.backbone}: "
+                f"{matched} of {matched + len(result.missing_keys)} weights loaded. "
+                f"Not in the file: {result.missing_keys[:5]}. In the file under "
+                f"{prefix!r} but not in the network: {result.unexpected_keys[:5]}. "
+                f"Training would have mixed pretrained and random layers."
             )
 
     @staticmethod

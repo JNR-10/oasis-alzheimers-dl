@@ -54,12 +54,12 @@ has nothing to do with the behaviour it names. Before trusting a test that guard
 something silent, delete the guard and confirm the test goes red. If it stays green,
 the test is decoration.
 
-Four guards in this suite were verified that way and the mutation is recorded beside
+Five guards in this suite were verified that way and the mutation is recorded beside
 each one: the temporal module's `src_key_padding_mask`, the `sorted()` before the split
-shuffle, subject-level resampling in the bootstrap, and the `matched == 0` check on
-checkpoint loading. Each fails silently in production — the shapes stay right and a
-plausible number still comes out — which is exactly the class of bug a passing test is
-most likely to be hiding.
+shuffle, subject-level resampling in the bootstrap, and on checkpoint loading both the
+`matched == 0` check and the refusal of a partial match. Each fails silently in
+production — the shapes stay right and a plausible number still comes out — which is
+exactly the class of bug a passing test is most likely to be hiding.
 
 ### Do not reduce with `.sum()`
 
