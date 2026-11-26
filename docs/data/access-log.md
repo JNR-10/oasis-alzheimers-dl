@@ -36,9 +36,11 @@ download is not the ADR-0010 subject sample and has not been label-balanced.
 The FreeSurfer spreadsheet has left and right hippocampus, lateral ventricle and
 entorhinal volume columns, plus `IntraCranialVol`. All seven columns contain positive
 numeric values in all 2,681 spreadsheet rows. The OASIS imaging dictionary identifies
-`IntraCranialVol` as an intracranial volume measure; whether that field is exactly
-FreeSurfer's estimated total intracranial volume (eTIV) has not been independently
-confirmed.
+`IntraCranialVol` as an intracranial volume measure. FreeSurfer's
+[documentation](https://surfer.nmr.mgh.harvard.edu/fswiki/MorphometryStats) says its
+estimated total intracranial volume (eTIV) is the same measure called `IntraCranialVol`
+in versions before 5.2. The supplied dictionary does not independently confirm the
+spreadsheet column's mapping to that FreeSurfer measure.
 
 An unlabeled inventory of the available OASIS-3 MRI metadata contains 1,376 subjects,
 2,832 T1w sessions and 4,116 T1w scan metadata entries. Of these, 960 sessions and
@@ -47,12 +49,11 @@ matching entries for 2,677 T1w sessions, including 2,675 with a non-quarantined 
 status. These are metadata and file-presence counts, not a training cohort or a
 source-side completeness check. The subject-identifying inventory stays outside git.
 
-The requested sampling pool is the existing 960-session list, rather than the full
-OASIS-3 metadata inventory. After the label rule is accepted in #13, #14 must assess
-its eligible subjects and whether they support the planned fixed, label-stratified
-sample. Existing scans will be reused; additional scans, if needed, can be downloaded
-after sampling. Sessions with multiple scans remain unchanged; scan selection is a
-#14 decision. No partitions have been drawn here.
+The sampling pool is the full OASIS-3 inventory, subject to eligibility under
+ADR-0010. After the label rule is accepted in #13, #14 draws the planned fixed,
+label-stratified sample. Scans already on disk will be reused where sampled; the
+remaining sampled scans can be downloaded after sampling. Sessions with multiple scans
+remain unchanged; scan selection is a #14 decision. No partitions have been drawn here.
 
 **What is preprocessed:** the sampled subjects only
 ([ADR-0010](../adr/0010-subsampled-cohort-and-reduced-resolution.md)), never the whole
