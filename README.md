@@ -12,20 +12,16 @@ Jainil Narendrakumar Rana · Nirupam Narayana Maladi · Mohit Manoj Barade
 
 ## Status
 
-**Pre-training.** The repository holds the proposal, the literature survey, the
-feasibility audit, the experimental protocol, and the implementation scaffold. No model
-has been trained and no result exists.
+**Pre-training.** Model, dataset, training-loop, and evaluation components exist and
+can be exercised on synthetic data. No reportable trained model or result exists yet.
 
-OASIS-3 access is granted ([`docs/data/access-log.md`](docs/data/access-log.md)), so the
-binding constraint is now compute rather than data. The project trains on a fixed
-300-subject sample at 2 mm / 96³ with 3 visits per sequence
-([ADR-0010](docs/adr/0010-subsampled-cohort-and-reduced-resolution.md)) — roughly an
-order of magnitude cheaper per run, with the sample drawn once before preprocessing so
-that no scan is processed that will not be trained on.
+OASIS-3 access is granted ([`docs/data/access-log.md`](docs/data/access-log.md)).
+The intended study uses a 300-subject sample at 96³ with up to 3 visits per
+sequence ([ADR-0010](docs/adr/0010-subsampled-cohort-and-reduced-resolution.md)).
+The label rule, cohort selection, and preprocessing must be resolved before real-data
+training; the existing downloads are not the finalized cohort.
 
-Every module under `src/oasis_dl/` is a typed interface with a documented contract and
-an unimplemented body — deliberately, so that the structure can be reviewed before the
-code commits to it, and so nothing here can be mistaken for a working pipeline.
+The training and evaluation command-line entry points are not implemented yet.
 
 ## The study
 
@@ -80,7 +76,7 @@ offered here is the controlled comparison — see
 │   ├── survey/              Literature and SOTA review
 │   ├── audits/              Novelty and feasibility audit
 │   └── proposal/            Course submission
-├── src/oasis_dl/            The package — interface seams, unimplemented
+├── src/oasis_dl/            The package — components and CLI entry points
 │   ├── data/                Manifest, cohort construction, splits, datasets
 │   ├── preprocessing/       MRI pipeline, anatomy target extraction
 │   ├── models/              Visit encoder, temporal module, heads, arms
@@ -88,7 +84,7 @@ offered here is the controlled comparison — see
 │   ├── evaluation/          Metrics, subject-level bootstrap
 │   └── cli/                 Hydra entrypoints
 ├── configs/                 Composable experiment configs
-├── tests/                   Unit and integration (empty until there is behaviour)
+├── tests/                   Unit and integration tests
 ├── experiments/             Per-run records: config, commit, seed, metrics
 └── data/ results/           Gitignored. Nothing here is ever committed.
 ```
@@ -106,11 +102,15 @@ Working on this with us? [`CONTRIBUTING.md`](CONTRIBUTING.md) is the short path:
 branching, the checks to run before pushing, and the three controls a change must not
 weaken. Coding agents read [`AGENTS.md`](AGENTS.md).
 
-An ablation is one override:
+To exercise the single-scan baseline pipeline on generated data after installation:
 
 ```bash
-python -m oasis_dl.cli.train experiment=proposed_b_anatomy
+python -m pytest tests/integration/test_pipeline_smoke.py -q
 ```
+
+This CPU smoke test trains and evaluates ResNet and tiny ViT models on temporary
+synthetic data. Its results are not research results and it does not use OASIS scans.
+The configured training CLI is not yet runnable.
 
 If a comparison needs more than one override to express, the configs are hiding an
 uncontrolled difference between the arms.
