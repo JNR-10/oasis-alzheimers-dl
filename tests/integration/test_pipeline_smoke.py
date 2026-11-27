@@ -44,7 +44,6 @@ from oasis_dl.training.seed import seed_everything
 from oasis_dl.types import Partition, Visit
 from oasis_dl.utils.provenance import RunProvenance
 
-SHAPE = (8, 8, 8)
 DIM = 16
 CPU = torch.device("cpu")
 
@@ -68,7 +67,13 @@ def _manifest_frame(visits: list[Visit], assignment: dict[str, Partition]) -> pd
     )
 
 
-def test_a_cohort_becomes_a_results_table(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("backbone", "volume_shape"),
+    [("resnet10", (8, 8, 8)), ("vit_tiny_8", (16, 16, 16))],
+)
+def test_a_cohort_becomes_a_results_table(
+    tmp_path: Path, backbone: str, volume_shape: tuple[int, int, int]
+) -> None:
     seed_everything(11, deterministic=False)
 
     # --- cohort -------------------------------------------------------------------
@@ -79,7 +84,7 @@ def test_a_cohort_becomes_a_results_table(tmp_path: Path) -> None:
             max_visits=2,
             impaired_fraction=0.35,
             unlabeled_fraction=0.0,
-            volume_shape=SHAPE,
+            volume_shape=volume_shape,
             seed=20261124,
         ),
     ).generate()
@@ -120,7 +125,7 @@ def test_a_cohort_becomes_a_results_table(tmp_path: Path) -> None:
         )
 
     model = SingleScanModel(
-        VisitEncoder(backbone="resnet10", embedding_dim=DIM, volume_shape=SHAPE),
+        VisitEncoder(backbone=backbone, embedding_dim=DIM, volume_shape=volume_shape),
         ClassificationHead(embedding_dim=DIM),
     )
     run_dir = tmp_path / "experiments" / "baseline_single_scan_seed11"
