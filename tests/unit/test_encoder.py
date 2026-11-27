@@ -318,9 +318,10 @@ class TestPretrainedCheckpoints:
             pretrained="test_tiny",
             checkpoint_path=checkpoint,
         )
-        saved = torch.load(checkpoint, map_location="cpu")
-        name, expected = next(iter(saved.items()))
-        torch.testing.assert_close(dict(loaded.body.state_dict())[name], expected)
+        saved = torch.load(checkpoint, map_location="cpu")["state_dict"]
+        network = loaded.body.vit.state_dict()
+        for name, expected in network.items():
+            torch.testing.assert_close(expected, saved[f"backbone.{name}"])
 
     def test_a_checkpoint_matching_nothing_is_an_error_not_a_silent_random_init(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -336,6 +337,50 @@ class TestPretrainedCheckpoints:
                 pretrained="test_tiny",
                 checkpoint_path=wrong,
             )
+
+    def test_a_partly_matching_checkpoint_is_an_error_naming_what_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A partial load is the quiet version of a failed one: most layers pretrained,
+        some random, and nothing in the shapes to say which.
+
+        Mutation-checked: with the partial-match check deleted, this test goes red."""
+        checkpoint = _write_tiny_checkpoint(tmp_path, monkeypatch, overlaps_oasis=False)
+        saved = torch.load(checkpoint, map_location="cpu")
+        dropped = "backbone.norm.weight"
+        del saved["state_dict"][dropped]
+        torch.save(saved, checkpoint)
+        with pytest.raises(ValueError, match=r"norm\.weight"):
+            VisitEncoder(
+                backbone="vit_tiny_8",
+                volume_shape=TINY,
+                pretrained="test_tiny",
+                checkpoint_path=checkpoint,
+            )
+
+    def test_backbone_weights_this_encoder_has_no_place_for_are_an_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A backbone weight left over means the file holds a different architecture.
+
+        Mutation-checked: with only missing weights refused, this test goes red."""
+        checkpoint = _write_tiny_checkpoint(tmp_path, monkeypatch, overlaps_oasis=False)
+        saved = torch.load(checkpoint, map_location="cpu")
+        saved["state_dict"]["backbone.blocks.9.attn.qkv.weight"] = torch.zeros(3)
+        torch.save(saved, checkpoint)
+        with pytest.raises(ValueError, match=r"blocks\.9\.attn\.qkv\.weight"):
+            VisitEncoder(
+                backbone="vit_tiny_8",
+                volume_shape=TINY,
+                pretrained="test_tiny",
+                checkpoint_path=checkpoint,
+            )
+
+    def test_brainiac_weights_are_read_from_under_backbone(self) -> None:
+        """Where BrainIAC's file keeps the ViT: its own loader strips ``backbone.``
+        (src/model.py, github.com/AIM-KannLab/BrainIAC), and the released checkpoint
+        loaded 0 of 137 weights until that prefix was handled (#18)."""
+        assert VisitEncoder.checkpoint_provenance("brainiac_vit_b").key_prefix == "backbone."
 
     def test_a_missing_checkpoint_file_is_reported_as_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -358,6 +403,10 @@ def _write_tiny_checkpoint(
     Registered through the same registry production uses, so the test exercises the
     real lookup. Monkeypatched, so it disappears with the test rather than becoming a
     fake entry a config could select.
+
+    Saved in the layout of the released BrainIAC checkpoint, which is the one file this
+    loader exists for: a Lightning checkpoint whose ``state_dict`` holds the ViT under
+    ``backbone.`` beside the SimCLR projection head, which is not ours to load.
     """
     from oasis_dl.models import encoder as encoder_module
 
@@ -370,11 +419,14 @@ def _write_tiny_checkpoint(
             license_terms="n/a",
             pretraining_corpus=("OASIS-3",) if overlaps_oasis else ("IXI",),
             overlaps_oasis=overlaps_oasis,
+            key_prefix="backbone.",
         ),
     )
     donor = VisitEncoder(backbone="vit_tiny_8", volume_shape=TINY)
+    weights = {f"backbone.{k}": v for k, v in donor.body.vit.state_dict().items()}
+    weights["projection_head.0.weight"] = torch.randn(4, 192)
     path = tmp_path / "tiny.pt"
-    torch.save(donor.body.state_dict(), path)
+    torch.save({"state_dict": weights, "epoch": 0}, path)
     return path
 
 
