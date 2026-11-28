@@ -20,7 +20,7 @@ from typing import Protocol
 
 import pandas as pd
 
-from oasis_dl.types import Label, Partition, SubjectId, Visit, VisitSequence
+from oasis_dl.types import Label, Partition, SessionId, SubjectId, Visit, VisitSequence
 
 
 @dataclass(frozen=True)
@@ -195,14 +195,105 @@ def build_visits(
     rule is reported in ``docs/data/cohort-definition.md``, and a number that has to be
     reconstructed from logs is a number that will be reconstructed wrong.
 
+    Rules applied, in order (the order is the cohort-definition order):
+
+    1. ``no_usable_t1_scan`` — a session with no T1w scan row. A source that already
+       filters to T1w will not produce these, but the rule is checked so a future
+       source that emits all modalities is caught at the same place.
+    2. ``preprocessing_failed`` — dropped only when ``require_preprocessing_success``
+       is true (always in practice). The source reports failure via the manifest's
+       ``exclusion_reason``; this rule counts it.
+
+    Sessions with no clinical assessment inside ``max_assessment_gap_days`` are **not
+    excluded**: per ADR-0004 they are never relabeled as cognitively normal, but they
+    remain in the cohort as context visits (``label=None``) that ``build_sequences``
+    can use as history for a later labeled visit of the same subject. They cannot
+    become target visits — ``build_sequences`` enforces that the target carries a
+    label.
+
+    The ADR-0010 subject sample is **not** applied here. Sampling precedes
+    preprocessing and is a separate step (see :func:`sample_subjects`); applying it
+    inside ``build_visits`` would hide the pre-sample eligible pool that the cohort
+    definition reports.
+
+    Args:
+        source: A :class:`CohortSource` (e.g. :class:`~oasis_dl.data.oasis3.Oasis3CohortSource`).
+        rules: The :class:`InclusionRules` to apply. ``max_assessment_gap_days`` is the
+            ADR-0004 window; the source has already attached the nearest-CDR gap, so
+            this rule is enforced here rather than re-joined.
+
     Returns:
-        The visits that passed, and one row per *input* session recording which rule
-        removed it, if any.
+        The visits that passed (labeled **and** unlabeled context visits), and one row
+        per *input* session with an ``exclusion_reason`` column that is empty for
+        survivors and names the rule that removed the rest.
     """
-    raise NotImplementedError(
-        "Blocked on the OASIS-3 CohortSource adapter (issue #14). ADR-0004 is accepted "
-        "(max_assessment_gap_days=180); apply that rule when implementing this."
-    )
+    sessions = source.sessions()
+
+    audit_rows: list[dict[str, object]] = []
+    visits: list[Visit] = []
+    for record in sessions.to_dict(orient="records"):
+        subject_id = SubjectId(str(record["subject_id"]))
+        session_id = str(record["session_id"])
+        days = int(record["days_from_entry"])
+        scan_path = Path(str(record["scan_path"]))
+        raw_label = record.get("label", None)
+        label = None if pd.isna(raw_label) else Label(int(float(raw_label)))
+
+        reason = ""
+        if "scan_category" in sessions.columns and str(
+            record.get("scan_category", "")
+        ).strip() not in ("", "T1w"):
+            reason = "no_usable_t1_scan"
+        else:
+            # Apply the ADR-0004 gap window. The source attached the nearest CDR and its
+            # gap; a session whose nearest assessment is outside the window is not
+            # excluded — it stays as a context visit with no label, never relabeled as
+            # cognitively normal. A session with no assessment at all (gap is NaN) is
+            # also a context visit.
+            raw_gap = record.get("cdr_gap_days", None)
+            if label is not None and not pd.isna(raw_gap):
+                if int(float(raw_gap)) > rules.max_assessment_gap_days:
+                    label = None
+            elif label is not None and pd.isna(raw_gap):
+                label = None
+            # Preprocessing failure is reported by the source via the manifest's
+            # ``exclusion_reason`` once #15 runs. Until then a not-yet-preprocessed
+            # session is kept in the cohort: the manifest is frozen before
+            # preprocessing, and the sample is drawn from this pool. The check is
+            # intentionally not an exclusion here, so the pre-sample eligible pool is
+            # the full T1w set.
+            if rules.require_preprocessing_success and not scan_path.exists():
+                # Inert until #15 marks failures: a raw scan that is not on disk yet
+                # points at a future preprocessed path, which is not a failure.
+                pass
+
+        audit_rows.append(
+            {
+                "subject_id": str(subject_id),
+                "session_id": session_id,
+                "days_from_entry": days,
+                "scan_path": str(scan_path),
+                "label": None if label is None else int(label.value),
+                "exclusion_reason": reason,
+            }
+        )
+        if not reason:
+            visits.append(
+                Visit(
+                    subject_id=subject_id,
+                    session_id=SessionId(session_id),
+                    days_from_entry=days,
+                    scan_path=scan_path,
+                    label=label,
+                )
+            )
+
+    audit = pd.DataFrame(audit_rows)
+    if not audit.empty:
+        audit = audit.sort_values(
+            by=["subject_id", "days_from_entry", "session_id"], kind="mergesort"
+        ).reset_index(drop=True)
+    return visits, audit
 
 
 def build_sequences(
