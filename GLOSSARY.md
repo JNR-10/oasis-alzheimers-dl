@@ -25,6 +25,12 @@ An imaging session that passed the inclusion rules and carries a resolvable labe
 The unit the model consumes. Every visit is a session; most sessions are not visits.
 _Avoid_: timepoint, observation, sample
 
+**Context visit**:
+An imaging session that passed the inclusion rules but has no clinical assessment
+inside the admissible gap, so it has no label. Never a target visit and never relabeled
+as cognitively normal; it appears only as earlier history in a later visit's sequence.
+_Avoid_: unlabeled visit, filler visit
+
 **Scan**:
 The 3D T1-weighted image acquired at a visit.
 _Avoid_: image, volume, MRI (as a count noun)

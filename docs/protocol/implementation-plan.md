@@ -117,6 +117,10 @@ Two, both gating and both easy to let slide:
   [ADR-0004](../adr/0004-label-definition-and-target-visit.md) from proposed to accepted.
   A label rule chosen after seeing results is not a label rule, so this is checkable
   against commit dates.
+
+  **Amendment, 2026-11-24.** ADR-0004 accepted: max gap **180 days**, unassessed
+  sessions never labeled and kept only as history, every labeled visit is a target. Chosen from the real T1w↔CDR gap
+  distribution (median 92 days); 90 days left fewer than 300 multi-visit subjects.
 - [**#16**](https://github.com/JNR-10/oasis-alzheimers-dl/issues/16) — the registration target. Registering every scan
   independently to a template may absorb the within-subject atrophy the temporal module
   exists to detect. Settle it on a handful of subjects before the cohort is processed;

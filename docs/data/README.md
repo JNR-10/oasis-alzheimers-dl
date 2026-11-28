@@ -74,10 +74,16 @@ larger one.
    Imaging Data Dictionary v2.3; LaMontagne et al. 2019
    ([doi:10.1101/2019.12.13.19014902](https://doi.org/10.1101/2019.12.13.19014902)).
 2. **How far apart can an imaging session and its clinical assessment be** and still
-   yield a usable label? Open parameter in [ADR-0004](../adr/0004-label-definition-and-target-visit.md).
-3. **How many subjects have two or more usable, labeled T1 visits?** This number, not
-   the headline dataset size, determines whether the longitudinal arm is trainable, and
-   whether 300 sampled subjects is a sample or the whole eligible pool.
+   yield a usable label? **Answered — [ADR-0004](../adr/0004-label-definition-and-target-visit.md):**
+   maximum gap **180 days** to the nearest CDR (`CDRTOT`); sessions outside the window
+   are never labeled or used as targets, only as history; every labeled visit is a
+   target visit. Chosen from the
+   real gap distribution (median 92 days); 90 days left too few multi-visit subjects for
+   the ADR-0010 sample of 300.
+3. **How many subjects have two or more usable, labeled T1 visits?** Under the 180-day
+   rule the metadata census finds **600** such subjects — enough headroom to draw the
+   ADR-0010 sample of 300. Final cohort counts still wait on the frozen manifest after
+   preprocessing.
 4. **Scanner and protocol heterogeneity across sessions.** OASIS-3 spans multiple
    scanners; if scanner correlates with label, it is a shortcut and must be reported.
    FreeSurfer version varies with scanner strength (see ADR-0010), so scanner and

@@ -30,9 +30,9 @@ def main(cfg: DictConfig) -> None:
     log.info("partition seed: %s", cfg.data.split_seed)
 
     raise NotImplementedError(
-        "Blocked on ADR-0004 reaching "
-        "accepted status. The partitioning this will call — oasis_dl.data.splits — is "
-        "written and tested; the cohort construction that feeds it is not."
+        "Blocked on the OASIS-3 CohortSource adapter and build_visits (issue #14). "
+        "ADR-0004 is accepted (max_assessment_gap_days=180). Splits and sampling are "
+        "ready once visits exist."
     )
 
 

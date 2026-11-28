@@ -19,10 +19,10 @@ sampling:
   sample_seed: 20261122
 
 # --- inclusion rules (docs/data/cohort-definition.md) ---
-# max_assessment_gap_days is the open parameter of ADR-0004. The value below is a
-# placeholder and is fixed from the real data before any model trains.
+# max_assessment_gap_days fixed by ADR-0004 (accepted 2026-11-24) from the real
+# OASIS-3 MRI↔CDR gap distribution. Do not retune after seeing results.
 inclusion:
-  max_assessment_gap_days: 365
+  max_assessment_gap_days: 180
   min_visits_for_longitudinal: 2
   require_preprocessing_success: true
 
