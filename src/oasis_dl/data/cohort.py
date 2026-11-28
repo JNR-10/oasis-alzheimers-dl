@@ -1,9 +1,9 @@
 """Cohort construction: dataset sessions in, visit sequences out.
 
-``sample_subjects``, ``build_sequences``, and ``summarize_cohort`` are implemented.
-``build_visits`` still needs the OASIS-3 :class:`CohortSource` adapter against
-``OASIS_ROOT`` (issue #14). The label rule it will apply is fixed: ADR-0004 accepted
-with ``max_assessment_gap_days = 180``.
+The order is ADR-0010's: :func:`build_visits` applies the inclusion rules and the
+ADR-0004 label rule, :func:`sampling_pool` keeps subjects with two or more labeled
+visits, :func:`sample_subjects` draws the fixed sample from them, and
+:func:`build_sequences` turns the sampled visits into one sequence per target visit.
 
 The dataset-specific parts sit behind :class:`CohortSource` so that the OASIS-2
 fallback of ADR-0003 is a different implementation rather than a rewrite.
@@ -20,7 +20,8 @@ from typing import Protocol
 
 import pandas as pd
 
-from oasis_dl.types import Label, Partition, SubjectId, Visit, VisitSequence
+from oasis_dl.data.splits import subject_label
+from oasis_dl.types import Label, Partition, SessionId, SubjectId, Visit, VisitSequence
 
 
 @dataclass(frozen=True)
@@ -185,6 +186,34 @@ def sample_subjects(
     return sorted(sampled)
 
 
+def sampling_pool(visits: Iterable[Visit], *, min_labeled_visits: int) -> dict[SubjectId, Label]:
+    """The subjects :func:`sample_subjects` may draw from, with their labels.
+
+    ADR-0010 samples from subjects with two or more eligible visits, and an eligible
+    visit is a **labeled** one. A subject with a single labeled visit gives the
+    temporal module nothing to learn from, and arms B1 and PA must be compared on the
+    same subjects, so such a subject is not sampled for either. Context visits
+    (``label=None``) add history to a sequence but never make a subject eligible.
+
+    Args:
+        visits: Every visit that passed the inclusion rules, labeled and context.
+        min_labeled_visits: ``InclusionRules.min_visits_for_longitudinal``.
+
+    Returns:
+        Each eligible subject's stratification label (impaired if any labeled visit is,
+        as :func:`~oasis_dl.data.splits.subject_label` defines it).
+    """
+    labeled: dict[SubjectId, list[Visit]] = defaultdict(list)
+    for visit in visits:
+        if visit.label is not None:
+            labeled[visit.subject_id].append(visit)
+    return {
+        subject: subject_label(build_sequences(subject_visits))
+        for subject, subject_visits in sorted(labeled.items())
+        if len(subject_visits) >= min_labeled_visits
+    }
+
+
 def build_visits(
     source: CohortSource,
     rules: InclusionRules,
@@ -195,14 +224,96 @@ def build_visits(
     rule is reported in ``docs/data/cohort-definition.md``, and a number that has to be
     reconstructed from logs is a number that will be reconstructed wrong.
 
+    Rules applied, in order (the order is the cohort-definition order):
+
+    1. ``no_usable_t1_scan`` — a session with no T1w scan row. A source that already
+       filters to T1w will not produce these, but the rule is checked so a future
+       source that emits all modalities is caught at the same place.
+    2. ``preprocessing_failed`` — **not applied yet.** The manifest is frozen before
+       any scan is preprocessed (ADR-0010), so nothing has failed. #15 adds this rule
+       when it records failures; until then ``require_preprocessing_success`` has no
+       effect here.
+
+    Sessions with no clinical assessment inside ``max_assessment_gap_days`` are **not
+    excluded**: per ADR-0004 they are never relabeled as cognitively normal, but they
+    remain in the cohort as context visits (``label=None``) that ``build_sequences``
+    can use as history for a later labeled visit of the same subject. They cannot
+    become target visits — ``build_sequences`` enforces that the target carries a
+    label.
+
+    The ADR-0010 subject sample is **not** applied here. Sampling precedes
+    preprocessing and is a separate step (see :func:`sample_subjects`); applying it
+    inside ``build_visits`` would hide the pre-sample eligible pool that the cohort
+    definition reports.
+
+    Args:
+        source: A :class:`CohortSource` (e.g. :class:`~oasis_dl.data.oasis3.Oasis3CohortSource`).
+        rules: The :class:`InclusionRules` to apply. ``max_assessment_gap_days`` is the
+            ADR-0004 window; the source has already attached the nearest-CDR gap, so
+            this rule is enforced here rather than re-joined.
+
     Returns:
-        The visits that passed, and one row per *input* session recording which rule
-        removed it, if any.
+        The visits that passed (labeled **and** unlabeled context visits), and one row
+        per *input* session with an ``exclusion_reason`` column that is empty for
+        survivors and names the rule that removed the rest.
     """
-    raise NotImplementedError(
-        "Blocked on the OASIS-3 CohortSource adapter (issue #14). ADR-0004 is accepted "
-        "(max_assessment_gap_days=180); apply that rule when implementing this."
-    )
+    sessions = source.sessions()
+
+    audit_rows: list[dict[str, object]] = []
+    visits: list[Visit] = []
+    for record in sessions.to_dict(orient="records"):
+        subject_id = SubjectId(str(record["subject_id"]))
+        session_id = str(record["session_id"])
+        days = int(record["days_from_entry"])
+        scan_path = Path(str(record["scan_path"]))
+        raw_label = record.get("label", None)
+        label = None if pd.isna(raw_label) else Label(int(float(raw_label)))
+
+        reason = ""
+        if "scan_category" in sessions.columns and str(
+            record.get("scan_category", "")
+        ).strip() not in ("", "T1w"):
+            reason = "no_usable_t1_scan"
+        else:
+            # Apply the ADR-0004 gap window. The source attached the nearest CDR and its
+            # gap; a session whose nearest assessment is outside the window is not
+            # excluded — it stays as a context visit with no label, never relabeled as
+            # cognitively normal. A session with no assessment at all (gap is NaN) is
+            # also a context visit.
+            raw_gap = record.get("cdr_gap_days", None)
+            if label is not None and not pd.isna(raw_gap):
+                if int(float(raw_gap)) > rules.max_assessment_gap_days:
+                    label = None
+            elif label is not None and pd.isna(raw_gap):
+                label = None
+
+        audit_rows.append(
+            {
+                "subject_id": str(subject_id),
+                "session_id": session_id,
+                "days_from_entry": days,
+                "scan_path": str(scan_path),
+                "label": None if label is None else int(label.value),
+                "exclusion_reason": reason,
+            }
+        )
+        if not reason:
+            visits.append(
+                Visit(
+                    subject_id=subject_id,
+                    session_id=SessionId(session_id),
+                    days_from_entry=days,
+                    scan_path=scan_path,
+                    label=label,
+                )
+            )
+
+    audit = pd.DataFrame(audit_rows)
+    if not audit.empty:
+        audit = audit.sort_values(
+            by=["subject_id", "days_from_entry", "session_id"], kind="mergesort"
+        ).reset_index(drop=True)
+    return visits, audit
 
 
 def build_sequences(

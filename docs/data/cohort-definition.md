@@ -1,9 +1,23 @@
 # Cohort Definition
 
-**Unfilled.** This document is completed from the real data before training begins, and
-is then frozen. It is the human-readable counterpart to the machine-readable manifest
-at `data/manifests/`; if the two disagree, the manifest is what ran and this file is
-wrong.
+**Partly filled 2026-11-27 from the first real cohort run** (`python -m
+oasis_dl.cli.build_cohort` against `OASIS_ROOT`, manifest under
+`${OASIS_ROOT}/manifests/`). It is the human-readable counterpart to the
+machine-readable manifest; if the two disagree, the manifest is what ran and this file
+is wrong.
+
+**First draw discarded, 2026-11-27.** That run drew the 300-subject sample from all
+1,295 subjects with one or more labeled visits, against ADR-0010's pool of subjects
+with two or more; its visit-count table showed 144 of the 300 with a single eligible
+visit. It was discarded before any scan was preprocessed and before any model was
+trained, so no result could have influenced it. The sample and the partitions are
+redrawn from the two-or-more pool with the same seeds. Counts that depend on the sample
+stay `_tbd_` until that run.
+
+Counts below are **pre-preprocessing**: the manifest freezes the sampled subject list
+and the eligibility audit before any scan is processed (ADR-0010). Fields that depend
+on preprocessing survival (rule 4, post-process visit counts) remain `_tbd_` until #15
+runs and the manifest is re-frozen.
 
 ## Inclusion rules
 
@@ -12,11 +26,11 @@ stated as a check does not belong here.
 
 | # | Rule | Sessions removed |
 |---|---|---|
-| 1 | Session has a usable T1-weighted scan | _tbd_ |
-| 2 | A clinical assessment exists within the admissible gap (ADR-0004) | _tbd_ |
-| 3 | Subject survives the ADR-0010 subject sample | _tbd_ |
-| 4 | Scan passes preprocessing without failure | _tbd_ |
-| 5 | Subject retains at least one eligible target visit | _tbd_ |
+| 1 | Session has a usable T1-weighted scan | 0 (the source emits T1w sessions only; 4,116 T1w scan rows collapse to 2,832 sessions) |
+| 2 | A clinical assessment exists within the admissible gap (ADR-0004) | 0 removed — 382 sessions have no CDR within 180 days and become **context visits** (`label=None`), not removed |
+| 3 | Subject survives the ADR-0010 subject sample | _tbd_ (redraw) |
+| 4 | Scan passes preprocessing without failure | _tbd_ (#15) |
+| 5 | Subject retains at least one eligible target visit | _tbd_ (post-preprocess) |
 
 Rule 3 sits **before** rule 4 on purpose. Sampling precedes preprocessing, so sessions
 removed by the sample are never processed at all — that ordering is where the project's
@@ -35,10 +49,11 @@ Drawn once, stratified by label, before partitioning. Recorded here and in the m
 
 | Field | Value |
 |---|---|
-| Eligible subjects before sampling | _tbd_ |
-| `max_subjects` | _tbd_ |
-| Sample seed | _tbd_ |
-| Drawn on | _tbd_ |
+| Subjects with ≥1 labeled T1 visit (not the pool) | 1,295 |
+| Eligible subjects before sampling (≥2 labeled T1 visits) | 600 |
+| `max_subjects` | 300 |
+| Sample seed | 20261122 |
+| Drawn on | _tbd_ (redraw) |
 | Label balance before sampling | _tbd_ |
 | Label balance after sampling | _tbd_ |
 
@@ -46,7 +61,10 @@ The two balance rows exist so a drift between them is visible rather than assume
 
 ## Resulting cohort
 
-| | Subjects | Visits | Impaired | Cognitively normal |
+Visit and label counts at visit level are pre-preprocessing; they are finalized after
+#15.
+
+| | Subjects | Target visits (pre-preprocess) | Impaired (subject-level) | Cognitively normal (subject-level) |
 |---|---|---|---|---|
 | Train | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
 | Validation | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
@@ -55,23 +73,26 @@ The two balance rows exist so a drift between them is visible rather than assume
 
 ## Visit-count distribution
 
-How many subjects have 1, 2, 3, … eligible visits. This distribution decides whether the
-temporal module has anything to learn from: a cohort that is overwhelmingly
-single-visit cannot support a longitudinal claim regardless of architecture.
+How many subjects have 1, 2, 3, … eligible visits (within the sampled 300,
+pre-preprocessing). This distribution decides whether the temporal module has anything
+to learn from: a cohort that is overwhelmingly single-visit cannot support a
+longitudinal claim regardless of architecture.
 
-| Eligible visits | Subjects |
+| Eligible visits | Subjects (sampled, pre-preprocess) |
 |---|---|
-| 1 | _tbd_ |
 | 2 | _tbd_ |
 | 3 | _tbd_ |
 | 4+ | _tbd_ |
+
+No sampled subject can have fewer than two: the pool excludes them.
 
 ## Cohort balance
 
 Age, sex, scanner, and education by partition and by label. Reported so that a
 difference between arms can be checked against a difference in who is in them. Where
 a covariate correlates with the label, it is named as a candidate shortcut rather than
-presented as disease signal.
+presented as disease signal. _tbd_ — filled from the frozen manifest once #15 lands
+and the per-session scanner/age/sex fields are joined.
 
 ## Partition seed
 
@@ -80,6 +101,6 @@ the manifest.
 
 | Field | Value |
 |---|---|
-| Seed | _tbd_ |
-| Drawn on | _tbd_ |
-| Ratio (train/val/test) | _tbd_ |
+| Seed | 42 |
+| Drawn on | _tbd_ (redraw) |
+| Ratio (train/val/test) | 0.60 / 0.20 / 0.20 |

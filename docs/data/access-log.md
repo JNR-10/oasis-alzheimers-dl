@@ -53,7 +53,17 @@ The sampling pool is the full OASIS-3 inventory, subject to eligibility under
 ADR-0010. After the label rule is accepted in #13, #14 draws the planned fixed,
 label-stratified sample. Scans already on disk will be reused where sampled; the
 remaining sampled scans can be downloaded after sampling. Sessions with multiple scans
-remain unchanged; scan selection is a #14 decision. No partitions have been drawn here.
+are collapsed to one by the cohort builder (lowest run number, tie-broken by filename);
+scan selection is no longer open. No partitions have been drawn here.
+
+**Cohort built 2026-11-27, first draw discarded.** Under ADR-0004's 180-day rule,
+1,295 subjects have at least one labeled T1 visit and 600 have two or more. The first
+run drew the sample from the 1,295 rather than ADR-0010's pool of 600; it was discarded
+before any preprocessing or training, and the sample (seed `20261122`) and partitions
+(seed `42`, 0.60/0.20/0.20) are redrawn from the 600. Counts are recorded in
+[`cohort-definition.md`](cohort-definition.md); the manifest itself is gitignored and
+lives under `${OASIS_ROOT}/manifests/`. Preprocessing (#15) has not run, so
+post-preprocess visit counts remain open.
 
 **What is preprocessed:** the sampled subjects only
 ([ADR-0010](../adr/0010-subsampled-cohort-and-reduced-resolution.md)), never the whole
