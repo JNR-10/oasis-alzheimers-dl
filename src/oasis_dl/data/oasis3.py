@@ -7,7 +7,7 @@ opened here, so the cohort can be decided before any scan is preprocessed (ADR-0
 Sources read from ``OASIS_ROOT`` (set in the environment, never committed):
 
 - ``OASIS3_MR_json.csv`` — one row per acquired MR scan. The ``scan category`` column
-  selects T1-weighted scans; the session ``label`` (e.g. ``OAS30044_MR_d0061``) carries
+  selects T1-weighted scans; the session ``label`` (``<subject>_MR_d<NNNN>``) carries
   the subject id and the days-from-entry (``_dNNNN``), which is also the temporal
   module's elapsed-time anchor (ADR-0006).
 - ``OASIS3_UDSb4_cdr.csv`` — one row per clinical assessment, with ``CDRTOT`` (the
@@ -116,7 +116,8 @@ class Oasis3CohortSource:
         # ``scan category`` column is the source-side modality tag, not a free-text
         # field, so an exact match is correct and a substring match would catch
         # ``T2w``/``T2star``.
-        t1w = frame[frame["scan category"].astype(str).str.strip() == "T1w"].copy()
+        category = frame["scan category"].map(lambda value: str(value).strip())
+        t1w = frame[category == "T1w"].copy()
         if t1w.empty:
             raise ValueError(
                 f"no T1w rows in {self._mr_path()}; check that the MR-json CSV is the "
@@ -145,9 +146,7 @@ class Oasis3CohortSource:
         """
         if len(scans) == 1:
             return scans.iloc[0]
-        ordered = scans.sort_values(
-            by=["run_number", "filename"], kind="mergesort"
-        )
+        ordered = scans.sort_values(by=["run_number", "filename"], kind="mergesort")
         return ordered.iloc[0]
 
     def _nearest_cdr(
@@ -204,7 +203,9 @@ class Oasis3CohortSource:
             if cdrtot is None:
                 label: float = float("nan")
             else:
-                label = float(Label.IMPAIRED.value if cdrtot > 0 else Label.COGNITIVELY_NORMAL.value)
+                label = float(
+                    Label.IMPAIRED.value if cdrtot > 0 else Label.COGNITIVELY_NORMAL.value
+                )
             rows.append(
                 {
                     "subject_id": subject,
@@ -229,8 +230,7 @@ class Oasis3CohortSource:
         """Where the chosen T1w scan for a session lives (raw or preprocessed)."""
         frame = self.sessions()
         match = frame[
-            (frame["subject_id"] == str(subject_id))
-            & (frame["session_id"] == str(session_id))
+            (frame["subject_id"] == str(subject_id)) & (frame["session_id"] == str(session_id))
         ]
         if match.empty:
             raise KeyError(f"no OASIS-3 session {session_id} for {subject_id}")
@@ -256,9 +256,6 @@ class Oasis3CohortSource:
             for candidate in raw_dir.rglob(Path(stem).name):
                 return candidate
         preprocessed = (
-            self.config.root
-            / self.config.preprocessed_subdir
-            / subject
-            / f"{session_id}.nii.gz"
+            self.config.root / self.config.preprocessed_subdir / subject / f"{session_id}.nii.gz"
         )
         return preprocessed

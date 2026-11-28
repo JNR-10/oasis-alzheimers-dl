@@ -20,6 +20,7 @@ from typing import Protocol
 
 import pandas as pd
 
+from oasis_dl.data.splits import subject_label
 from oasis_dl.types import Label, Partition, SessionId, SubjectId, Visit, VisitSequence
 
 
@@ -185,6 +186,34 @@ def sample_subjects(
     return sorted(sampled)
 
 
+def sampling_pool(visits: Iterable[Visit], *, min_labeled_visits: int) -> dict[SubjectId, Label]:
+    """The subjects :func:`sample_subjects` may draw from, with their labels.
+
+    ADR-0010 samples from subjects with two or more eligible visits, and an eligible
+    visit is a **labeled** one. A subject with a single labeled visit gives the
+    temporal module nothing to learn from, and arms B1 and PA must be compared on the
+    same subjects, so such a subject is not sampled for either. Context visits
+    (``label=None``) add history to a sequence but never make a subject eligible.
+
+    Args:
+        visits: Every visit that passed the inclusion rules, labeled and context.
+        min_labeled_visits: ``InclusionRules.min_visits_for_longitudinal``.
+
+    Returns:
+        Each eligible subject's stratification label (impaired if any labeled visit is,
+        as :func:`~oasis_dl.data.splits.subject_label` defines it).
+    """
+    labeled: dict[SubjectId, list[Visit]] = defaultdict(list)
+    for visit in visits:
+        if visit.label is not None:
+            labeled[visit.subject_id].append(visit)
+    return {
+        subject: subject_label(build_sequences(subject_visits))
+        for subject, subject_visits in sorted(labeled.items())
+        if len(subject_visits) >= min_labeled_visits
+    }
+
+
 def build_visits(
     source: CohortSource,
     rules: InclusionRules,
@@ -200,9 +229,10 @@ def build_visits(
     1. ``no_usable_t1_scan`` — a session with no T1w scan row. A source that already
        filters to T1w will not produce these, but the rule is checked so a future
        source that emits all modalities is caught at the same place.
-    2. ``preprocessing_failed`` — dropped only when ``require_preprocessing_success``
-       is true (always in practice). The source reports failure via the manifest's
-       ``exclusion_reason``; this rule counts it.
+    2. ``preprocessing_failed`` — **not applied yet.** The manifest is frozen before
+       any scan is preprocessed (ADR-0010), so nothing has failed. #15 adds this rule
+       when it records failures; until then ``require_preprocessing_success`` has no
+       effect here.
 
     Sessions with no clinical assessment inside ``max_assessment_gap_days`` are **not
     excluded**: per ADR-0004 they are never relabeled as cognitively normal, but they
@@ -256,16 +286,6 @@ def build_visits(
                     label = None
             elif label is not None and pd.isna(raw_gap):
                 label = None
-            # Preprocessing failure is reported by the source via the manifest's
-            # ``exclusion_reason`` once #15 runs. Until then a not-yet-preprocessed
-            # session is kept in the cohort: the manifest is frozen before
-            # preprocessing, and the sample is drawn from this pool. The check is
-            # intentionally not an exclusion here, so the pre-sample eligible pool is
-            # the full T1w set.
-            if rules.require_preprocessing_success and not scan_path.exists():
-                # Inert until #15 marks failures: a raw scan that is not on disk yet
-                # points at a future preprocessed path, which is not a failure.
-                pass
 
         audit_rows.append(
             {

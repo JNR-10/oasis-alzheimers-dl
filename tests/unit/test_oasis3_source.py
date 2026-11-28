@@ -15,7 +15,7 @@ import pytest
 
 from oasis_dl.data.cohort import InclusionRules, build_sequences, build_visits
 from oasis_dl.data.oasis3 import Oasis3CohortSource, Oasis3SourceConfig
-from oasis_dl.types import Label, SessionId, SubjectId
+from oasis_dl.types import Label, SubjectId
 
 _MR_CSV_REL = (
     "OASIS3_data_files_full_set/scans/"
@@ -160,7 +160,9 @@ class TestBuildVisitsAppliesADR0004:
         # Subject B d50: nearest CDR is d600, gap 550 > 180 → unlabeled context.
         assert by_session["OAS310002_MR_d0050"].label is None
         # It is still in the cohort (not excluded).
-        assert audit.loc[audit["session_id"] == "OAS310002_MR_d0050", "exclusion_reason"].iloc[0] == ""
+        assert (
+            audit.loc[audit["session_id"] == "OAS310002_MR_d0050", "exclusion_reason"].iloc[0] == ""
+        )
 
     def test_sessions_inside_the_gap_window_keep_their_label(
         self, source: Oasis3CohortSource
@@ -187,9 +189,7 @@ class TestBuildVisitsAppliesADR0004:
         # Every emitted session has an empty exclusion_reason (no T1w failures here).
         assert (audit["exclusion_reason"] == "").all()
 
-    def test_context_visits_serve_as_history_in_sequences(
-        self, source: Oasis3CohortSource
-    ) -> None:
+    def test_context_visits_serve_as_history_in_sequences(self, source: Oasis3CohortSource) -> None:
         """The unlabeled d50 visit of subject B must be usable as context, never a
         target — build_sequences enforces the target carries a label."""
         rules = InclusionRules(max_assessment_gap_days=180)

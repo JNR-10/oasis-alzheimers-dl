@@ -23,12 +23,13 @@ from oasis_dl.data.cohort import (
     build_sequences,
     build_visits,
     sample_subjects,
+    sampling_pool,
     summarize_cohort,
 )
 from oasis_dl.data.manifest import write_manifest
 from oasis_dl.data.oasis3 import Oasis3CohortSource, Oasis3SourceConfig
-from oasis_dl.data.splits import partition_subjects, subject_label
-from oasis_dl.types import Partition, SubjectId, Visit
+from oasis_dl.data.splits import partition_subjects
+from oasis_dl.types import Partition, SubjectId
 
 log = logging.getLogger(__name__)
 
@@ -53,9 +54,7 @@ def main(cfg: DictConfig) -> None:
     rules = InclusionRules(
         max_assessment_gap_days=int(cfg.data.inclusion.max_assessment_gap_days),
         min_visits_for_longitudinal=int(cfg.data.inclusion.min_visits_for_longitudinal),
-        require_preprocessing_success=bool(
-            cfg.data.inclusion.require_preprocessing_success
-        ),
+        require_preprocessing_success=bool(cfg.data.inclusion.require_preprocessing_success),
     )
     max_subjects = cfg.data.sampling.max_subjects
     sample_seed = int(cfg.data.sampling.sample_seed)
@@ -72,45 +71,30 @@ def main(cfg: DictConfig) -> None:
     source = Oasis3CohortSource(Oasis3SourceConfig(root=Path(oasis_root)))
     visits, audit = build_visits(source, rules)
 
-    eligible_with_label = [v for v in visits if v.label is not None]
-    if not eligible_with_label:
+    # ADR-0010 samples from subjects with two or more labeled visits only.
+    subject_labels = sampling_pool(visits, min_labeled_visits=rules.min_visits_for_longitudinal)
+    if not subject_labels:
         raise RuntimeError(
-            "no labeled visits survived the inclusion rules; cannot build a cohort"
+            f"no subject has {rules.min_visits_for_longitudinal} or more labeled "
+            f"visits; there is no longitudinal cohort to sample"
         )
 
-    # Subject stratification label: any-impaired (splits.subject_label convention).
-    by_subject: dict[SubjectId, list[Visit]] = {}
-    for visit in eligible_with_label:
-        by_subject.setdefault(visit.subject_id, []).append(visit)
-    subject_labels = {
-        subject: subject_label(
-            build_sequences(by_subject[subject], max_length=max_sequence_length)
-        )
-        for subject in by_subject
-    }
-
-    sampled = sample_subjects(
-        subject_labels, max_subjects=max_subjects, seed=sample_seed
-    )
+    sampled = sample_subjects(subject_labels, max_subjects=max_subjects, seed=sample_seed)
     sampled_set = set(sampled)
     log.info(
-        "sampled %d of %d eligible subjects (stratified by label)",
+        "sampled %d of %d subjects with >= %d labeled visits (stratified by label)",
         len(sampled),
         len(subject_labels),
+        rules.min_visits_for_longitudinal,
     )
 
     # Keep only sampled subjects' visits; build sequences; partition the sampled pool.
     sampled_visits = [v for v in visits if v.subject_id in sampled_set]
     sequences = build_sequences(sampled_visits, max_length=max_sequence_length)
-    sampled_subject_labels = {
-        subject: subject_labels[subject] for subject in sampled
-    }
-    assignment = partition_subjects(
-        sampled_subject_labels, ratios=split_ratios, seed=split_seed
-    )
+    sampled_subject_labels = {subject: subject_labels[subject] for subject in sampled}
+    assignment = partition_subjects(sampled_subject_labels, ratios=split_ratios, seed=split_seed)
 
     manifest_frame = _build_manifest_frame(
-        visits=visits,
         sampled=sampled_set,
         assignment=assignment,
         audit=audit,
@@ -125,7 +109,6 @@ def main(cfg: DictConfig) -> None:
 
 
 def _build_manifest_frame(
-    visits: list[Visit],
     sampled: set[SubjectId],
     assignment: dict[SubjectId, Partition],
     audit: pd.DataFrame,

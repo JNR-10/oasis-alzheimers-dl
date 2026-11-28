@@ -1,9 +1,18 @@
 # Cohort Definition
 
-**Filled 2026-11-27 from the first real cohort run** (`python -m oasis_dl.cli.build_cohort`
-against `OASIS_ROOT`, manifest at `${OASIS_ROOT}/manifests/oasis3_cohort.csv`). It is
-the human-readable counterpart to the machine-readable manifest; if the two disagree,
-the manifest is what ran and this file is wrong.
+**Partly filled 2026-11-27 from the first real cohort run** (`python -m
+oasis_dl.cli.build_cohort` against `OASIS_ROOT`, manifest under
+`${OASIS_ROOT}/manifests/`). It is the human-readable counterpart to the
+machine-readable manifest; if the two disagree, the manifest is what ran and this file
+is wrong.
+
+**First draw discarded, 2026-11-27.** That run drew the 300-subject sample from all
+1,295 subjects with one or more labeled visits, against ADR-0010's pool of subjects
+with two or more; its visit-count table showed 144 of the 300 with a single eligible
+visit. It was discarded before any scan was preprocessed and before any model was
+trained, so no result could have influenced it. The sample and the partitions are
+redrawn from the two-or-more pool with the same seeds. Counts that depend on the sample
+stay `_tbd_` until that run.
 
 Counts below are **pre-preprocessing**: the manifest freezes the sampled subject list
 and the eligibility audit before any scan is processed (ADR-0010). Fields that depend
@@ -19,7 +28,7 @@ stated as a check does not belong here.
 |---|---|---|
 | 1 | Session has a usable T1-weighted scan | 0 (the source emits T1w sessions only; 4,116 T1w scan rows collapse to 2,832 sessions) |
 | 2 | A clinical assessment exists within the admissible gap (ADR-0004) | 0 removed — 382 sessions have no CDR within 180 days and become **context visits** (`label=None`), not removed |
-| 3 | Subject survives the ADR-0010 subject sample | 2,173 sessions (sessions of the 995 non-sampled subjects) |
+| 3 | Subject survives the ADR-0010 subject sample | _tbd_ (redraw) |
 | 4 | Scan passes preprocessing without failure | _tbd_ (#15) |
 | 5 | Subject retains at least one eligible target visit | _tbd_ (post-preprocess) |
 
@@ -40,27 +49,27 @@ Drawn once, stratified by label, before partitioning. Recorded here and in the m
 
 | Field | Value |
 |---|---|
-| Eligible subjects before sampling (≥1 labeled T1 visit) | 1,295 |
-| Subjects with ≥2 labeled T1 visits | 600 |
+| Subjects with ≥1 labeled T1 visit (not the pool) | 1,295 |
+| Eligible subjects before sampling (≥2 labeled T1 visits) | 600 |
 | `max_subjects` | 300 |
 | Sample seed | 20261122 |
-| Drawn on | 2026-11-27 |
-| Label balance before sampling | 874 cognitively normal / 421 impaired |
-| Label balance after sampling | 202 cognitively normal / 98 impaired |
+| Drawn on | _tbd_ (redraw) |
+| Label balance before sampling | _tbd_ |
+| Label balance after sampling | _tbd_ |
 
 The two balance rows exist so a drift between them is visible rather than assumed away.
 
 ## Resulting cohort
 
-Subject counts per partition are fixed by the seed and will not change. Visit and
-label counts at visit level are pre-preprocessing; they will be finalized after #15.
+Visit and label counts at visit level are pre-preprocessing; they are finalized after
+#15.
 
 | | Subjects | Target visits (pre-preprocess) | Impaired (subject-level) | Cognitively normal (subject-level) |
 |---|---|---|---|---|
-| Train | 180 | 368 | 59 | 121 |
-| Validation | 61 | 109 | 20 | 41 |
-| Test | 59 | 118 | 19 | 40 |
-| **Total** | 300 | 595 | 98 | 202 |
+| Train | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| Validation | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| Test | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| **Total** | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
 
 ## Visit-count distribution
 
@@ -71,15 +80,11 @@ longitudinal claim regardless of architecture.
 
 | Eligible visits | Subjects (sampled, pre-preprocess) |
 |---|---|
-| 1 | 144 |
-| 2 | 79 |
-| 3 | 33 |
-| 4 | 19 |
-| 5 | 8 |
-| 6 | 7 |
-| 7 | 5 |
-| 8 | 4 |
-| 9 | 1 |
+| 2 | _tbd_ |
+| 3 | _tbd_ |
+| 4+ | _tbd_ |
+
+No sampled subject can have fewer than two: the pool excludes them.
 
 ## Cohort balance
 
@@ -97,5 +102,5 @@ the manifest.
 | Field | Value |
 |---|---|
 | Seed | 42 |
-| Drawn on | 2026-11-27 |
+| Drawn on | _tbd_ (redraw) |
 | Ratio (train/val/test) | 0.60 / 0.20 / 0.20 |

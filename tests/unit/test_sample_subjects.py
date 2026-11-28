@@ -10,9 +10,9 @@ import re
 from collections import Counter
 
 import pytest
-from tests.helpers import make_subject_labels
+from tests.helpers import make_subject_labels, make_visit
 
-from oasis_dl.data.cohort import sample_subjects
+from oasis_dl.data.cohort import sample_subjects, sampling_pool
 from oasis_dl.types import Label, SubjectId
 
 
@@ -141,3 +141,44 @@ class TestTheMinorityClassSurvivesTheDraw:
         """The boundary: 2 impaired in 100, drawing 50, is exactly one impaired."""
         sampled = sample_subjects(_population(2, 98), max_subjects=50, seed=0)
         assert _labels_from_ids(_population(2, 98), sampled)[Label.IMPAIRED] == 1
+
+
+class TestSamplingPool:
+    """Who may be sampled at all: ADR-0010 samples from subjects with two or more
+    labeled visits, because a subject with one has nothing for the temporal module to
+    learn from, and B1 and PA must be compared on the same subjects."""
+
+    def test_one_labeled_visit_is_not_enough_however_much_context_surrounds_it(
+        self,
+    ) -> None:
+        """Mutation-checked: counting every visit instead of labeled ones turns this red."""
+        visits = [
+            make_visit("S1", 0, None),
+            make_visit("S1", 100, None),
+            make_visit("S1", 200, Label.COGNITIVELY_NORMAL),
+            make_visit("S2", 0, Label.COGNITIVELY_NORMAL),
+            make_visit("S2", 300, Label.COGNITIVELY_NORMAL),
+        ]
+        assert set(sampling_pool(visits, min_labeled_visits=2)) == {SubjectId("S2")}
+
+    def test_each_subject_carries_its_stratification_label(self) -> None:
+        visits = [
+            make_visit("S1", 0, Label.COGNITIVELY_NORMAL),
+            make_visit("S1", 400, Label.IMPAIRED),
+            make_visit("S2", 0, Label.COGNITIVELY_NORMAL),
+            make_visit("S2", 400, Label.COGNITIVELY_NORMAL),
+        ]
+        assert sampling_pool(visits, min_labeled_visits=2) == {
+            SubjectId("S1"): Label.IMPAIRED,
+            SubjectId("S2"): Label.COGNITIVELY_NORMAL,
+        }
+
+    def test_the_threshold_is_the_callers(self) -> None:
+        visits = [
+            make_visit("S1", 0, Label.COGNITIVELY_NORMAL),
+            make_visit("S1", 400, Label.COGNITIVELY_NORMAL),
+            make_visit("S2", 0, Label.COGNITIVELY_NORMAL),
+            make_visit("S2", 200, Label.COGNITIVELY_NORMAL),
+            make_visit("S2", 400, Label.IMPAIRED),
+        ]
+        assert set(sampling_pool(visits, min_labeled_visits=3)) == {SubjectId("S2")}
