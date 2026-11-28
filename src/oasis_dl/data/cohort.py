@@ -1,8 +1,9 @@
 """Cohort construction: dataset sessions in, visit sequences out.
 
-Unimplemented. The label rule it depends on is still open (ADR-0004); the download
-itself has arrived. The interface is fixed here so that the modules downstream of it
-can be built and tested against the synthetic cohort in the meantime.
+``sample_subjects``, ``build_sequences``, and ``summarize_cohort`` are implemented.
+``build_visits`` still needs the OASIS-3 :class:`CohortSource` adapter against
+``OASIS_ROOT`` (issue #14). The label rule it will apply is fixed: ADR-0004 accepted
+with ``max_assessment_gap_days = 180``.
 
 The dataset-specific parts sit behind :class:`CohortSource` so that the OASIS-2
 fallback of ADR-0003 is a different implementation rather than a rewrite.
@@ -31,7 +32,8 @@ class InclusionRules:
 
     Attributes:
         max_assessment_gap_days: How far a clinical assessment may be from an imaging
-            session and still label it. Open parameter of ADR-0004.
+            session and still label it. Fixed at 180 by ADR-0004; recorded in the
+            manifest rather than hard-coded in the model.
         min_visits_for_longitudinal: Visits a subject needs to enter the longitudinal
             arm. The single-scan and longitudinal arms are compared on this same
             subset, so that the first core ablation varies architecture alone.
@@ -198,9 +200,8 @@ def build_visits(
         removed it, if any.
     """
     raise NotImplementedError(
-        "Blocked on ADR-0004 reaching accepted status — the label rule must be fixed "
-        "before a cohort is built from it. See docs/adr/0004-label-definition-and-"
-        "target-visit.md."
+        "Blocked on the OASIS-3 CohortSource adapter (issue #14). ADR-0004 is accepted "
+        "(max_assessment_gap_days=180); apply that rule when implementing this."
     )
 
 
