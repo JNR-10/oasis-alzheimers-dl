@@ -17,7 +17,7 @@ the cohort. A label rule chosen after seeing results is not a label rule.
 | Parameter | Value |
 |---|---|
 | Maximum imaging-to-assessment gap | **180 days** |
-| Visits with no assessment inside the window | **Excluded** (not relabeled); count reported |
+| Sessions with no assessment inside the window | **Never labeled, never a target visit**; kept only as history (a context visit); count reported |
 | Which eligible visits become target visits | **Every** eligible visit |
 
 `max_assessment_gap_days = 180` is a cohort parameter recorded in the manifest, not a
@@ -77,9 +77,13 @@ at sampling or loss level, never by splitting the subject across partitions
 
 ## Consequences
 
-- Visits without a CDR inside 180 days are excluded and counted in
-  [`../data/cohort-definition.md`](../data/cohort-definition.md); they are never
-  filled in as cognitively normal.
+- A session without a CDR inside 180 days is never filled in as cognitively normal
+  and never becomes a target visit. It stays in the cohort as a context visit: earlier
+  history in the sequence of a later target visit of the same subject, as the
+  synthetic cohort and `build_sequences` already assume. The count is reported in
+  [`../data/cohort-definition.md`](../data/cohort-definition.md).
+- The ADR-0010 sampling pool counts **labeled** visits: a subject needs two or more to
+  be sampled. Context visits add history but do not make a subject eligible.
 - MMSE may appear in UDSb4 for cohort description; it is never an inference feature
   ([ADR-0002](0002-no-cognitive-scores-at-inference.md)).
 - A subject with several eligible visits contributes several correlated sequences;

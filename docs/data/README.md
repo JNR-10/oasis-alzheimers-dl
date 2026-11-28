@@ -75,8 +75,9 @@ larger one.
    ([doi:10.1101/2019.12.13.19014902](https://doi.org/10.1101/2019.12.13.19014902)).
 2. **How far apart can an imaging session and its clinical assessment be** and still
    yield a usable label? **Answered — [ADR-0004](../adr/0004-label-definition-and-target-visit.md):**
-   maximum gap **180 days** to the nearest CDR (`CDRTOT`); visits outside the window
-   are excluded, not relabeled; every eligible visit is a target visit. Chosen from the
+   maximum gap **180 days** to the nearest CDR (`CDRTOT`); sessions outside the window
+   are never labeled or used as targets, only as history; every labeled visit is a
+   target visit. Chosen from the
    real gap distribution (median 92 days); 90 days left too few multi-visit subjects for
    the ADR-0010 sample of 300.
 3. **How many subjects have two or more usable, labeled T1 visits?** Under the 180-day
