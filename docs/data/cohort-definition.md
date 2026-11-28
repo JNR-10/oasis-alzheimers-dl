@@ -75,19 +75,20 @@ Visit and label counts at visit level are pre-preprocessing; they are finalized 
 
 ## Visit-count distribution
 
-How many subjects have 1, 2, 3, … eligible visits (within the sampled 300,
-pre-preprocessing). Unique sessions in the subject's sequences, including context
-visits. This distribution decides whether the temporal module has anything to learn
+How many visits each sampled subject has (within the sampled 300, pre-preprocessing).
+A visit counts here if it appears in any of the subject's sequences, so context visits
+count alongside labeled ones; the ADR-0010 pool, by contrast, counts labeled visits
+only. This distribution decides whether the temporal module has anything to learn
 from: a cohort that is overwhelmingly single-visit cannot support a longitudinal claim
 regardless of architecture.
 
-| Eligible visits | Subjects (sampled, pre-preprocess) |
+| Visits (labeled + context) | Subjects (sampled, pre-preprocess) |
 |---|---|
 | 2 | 134 |
 | 3 | 72 |
 | 4+ | 94 |
 
-No sampled subject can have fewer than two: the pool excludes them.
+No sampled subject can have fewer than two: the pool requires two labeled visits.
 
 ## Cohort balance
 

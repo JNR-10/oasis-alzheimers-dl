@@ -1,9 +1,9 @@
 # Dataset Card — OASIS-3
 
-Status: access granted, cohort not yet built. Figures below describe the **released
-dataset**, not our cohort. Our cohort numbers stay unknown until
-[`cohort-definition.md`](cohort-definition.md) is filled in from the real data, and
-nothing in this project quotes a cohort size until then.
+Status: access granted; subject sample and partitions drawn 2026-11-27, preprocessing
+not yet run. Figures below describe the **released dataset**, not our cohort. Our
+cohort numbers live in [`cohort-definition.md`](cohort-definition.md), and the
+post-preprocessing ones stay unknown until #15 runs.
 
 ## Source
 

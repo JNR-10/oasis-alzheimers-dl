@@ -59,9 +59,9 @@ scan selection is no longer open. No partitions have been drawn here.
 **Cohort built 2026-11-27, first draw discarded.** Under ADR-0004's 180-day rule,
 1,295 subjects have at least one labeled T1 visit and 600 have two or more. The first
 run drew the sample from the 1,295 rather than ADR-0010's pool of 600; it was discarded
-before any preprocessing or training, and the sample (seed `20261122`) and partitions
-(seed `42`, 0.60/0.20/0.20) are redrawn from the 600. Counts are recorded in
-[`cohort-definition.md`](cohort-definition.md); the manifest itself is gitignored and
+before any preprocessing or training. The sample (seed `20261122`) and partitions
+(seed `42`, 0.60/0.20/0.20) were redrawn from the 600 the same day. Counts are recorded
+in [`cohort-definition.md`](cohort-definition.md); the manifest itself is gitignored and
 lives under `${OASIS_ROOT}/manifests/`. Preprocessing (#15) has not run, so
 post-preprocess visit counts remain open.
 
