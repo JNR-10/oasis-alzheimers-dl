@@ -19,8 +19,8 @@ trade-off. Everything else is just the obvious thing and needs no record.
 | [0011](0011-pretrained-vit-encoder.md) | Pretrained 3D ViT-B/16 shared encoder, and its OASIS overlap | accepted |
 
 ADR-0004 reached `accepted` on 2026-11-24 from the real OASIS-3 MRI↔CDR gap
-distribution (180-day window; unassessed visits excluded; every eligible visit is a
-target). It must stay fixed before any real-cohort training run.
+distribution (180-day window; unassessed sessions never labeled, kept only as history;
+every labeled visit is a target). It must stay fixed before any real-cohort training run.
 
 Superseding a record keeps the original file and marks its status; it is not deleted,
 because the reasoning that was once persuasive is the useful part of the history.

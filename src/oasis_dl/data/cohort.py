@@ -1,9 +1,9 @@
 """Cohort construction: dataset sessions in, visit sequences out.
 
-``sample_subjects``, ``build_sequences``, and ``summarize_cohort`` are implemented.
-``build_visits`` still needs the OASIS-3 :class:`CohortSource` adapter against
-``OASIS_ROOT`` (issue #14). The label rule it will apply is fixed: ADR-0004 accepted
-with ``max_assessment_gap_days = 180``.
+The order is ADR-0010's: :func:`build_visits` applies the inclusion rules and the
+ADR-0004 label rule, :func:`sampling_pool` keeps subjects with two or more labeled
+visits, :func:`sample_subjects` draws the fixed sample from them, and
+:func:`build_sequences` turns the sampled visits into one sequence per target visit.
 
 The dataset-specific parts sit behind :class:`CohortSource` so that the OASIS-2
 fallback of ADR-0003 is a different implementation rather than a rewrite.

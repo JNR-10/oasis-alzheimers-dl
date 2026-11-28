@@ -3,7 +3,6 @@
 | Document | What it answers |
 |---|---|
 | [`../GLOSSARY.md`](../GLOSSARY.md) | What does this word mean here? |
-| [`project-status.md`](project-status.md) | Where are we, who shipped what, what is blocked? (plain-language snapshot) |
 | [`adr/`](adr/) | Why was it built this way? |
 | [`data/`](data/) | What data, obtained how, under what terms? |
 | [`protocol/`](protocol/) | What exactly will be run, and how is it judged? |
